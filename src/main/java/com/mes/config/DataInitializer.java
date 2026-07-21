@@ -28,10 +28,12 @@ public class DataInitializer implements ApplicationRunner {
         }
 
         SysUser admin = new SysUser();
-        admin.setUsername("admin");
+        admin.setUserCode("admin");
+        admin.setUserName("管理员");
         admin.setPassword(PasswordUtil.encode("123456"));
-        admin.setNickname("管理员");
         admin.setStatus(1);
+        admin.setMustChangePwd(0);
+        admin.setSource("local");
         sysUserMapper.insert(admin);
         log.info("已初始化默认用户 admin / 123456");
     }

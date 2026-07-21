@@ -25,9 +25,9 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginVO login(LoginDTO dto) {
         SysUser user = sysUserMapper.selectOne(new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getUsername, dto.getUsername()));
-        AssertUtil.notNull(user, "用户名或密码错误");
-        AssertUtil.isTrue(PasswordUtil.matches(dto.getPassword(), user.getPassword()), "用户名或密码错误");
+                .eq(SysUser::getUserCode, dto.getUserCode()));
+        AssertUtil.notNull(user, "用户编码或密码错误");
+        AssertUtil.isTrue(PasswordUtil.matches(dto.getPassword(), user.getPassword()), "用户编码或密码错误");
         AssertUtil.isTrue(user.getStatus() != null && user.getStatus() == 1, "账号已禁用");
 
         StpUtil.login(user.getId());
@@ -51,8 +51,8 @@ public class AuthServiceImpl implements AuthService {
 
         UserInfoVO vo = new UserInfoVO();
         vo.setId(user.getId());
-        vo.setUsername(user.getUsername());
-        vo.setNickname(user.getNickname());
+        vo.setUserCode(user.getUserCode());
+        vo.setUserName(user.getUserName());
         return vo;
     }
 }

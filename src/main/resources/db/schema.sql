@@ -3,9 +3,9 @@
 -- =========================
 CREATE TABLE IF NOT EXISTS sys_user (
     id               BIGINT       NOT NULL COMMENT '主键',
-    username         VARCHAR(64)  NOT NULL COMMENT '工号',
+    user_code        VARCHAR(64)  NOT NULL COMMENT '用户编码（登录）',
+    user_name        VARCHAR(64)  NOT NULL COMMENT '姓名',
     password         VARCHAR(128) NOT NULL COMMENT '密码',
-    nickname         VARCHAR(64)           COMMENT '昵称',
     status           TINYINT      NOT NULL DEFAULT 1 COMMENT '状态 1正常 0禁用',
     must_change_pwd  TINYINT      NOT NULL DEFAULT 0 COMMENT '1强制下次改密',
     source           VARCHAR(16)  NOT NULL DEFAULT 'local' COMMENT '账号来源 local/sso',
@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS sys_user (
     update_time      DATETIME              COMMENT '更新时间',
     deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_username (username),
+    UNIQUE KEY uk_user_code (user_code),
+    KEY idx_user_name (user_name),
     KEY idx_external (source, external_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统用户';
 

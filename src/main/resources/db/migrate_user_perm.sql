@@ -1,5 +1,5 @@
--- 已有库升级：sys_user 扩展字段（新库直接跑 schema.sql 即可，无需执行本文件）
--- 若列已存在会报错，按需注释对应行
+-- 已有库升级（新库直接跑 schema.sql）
+-- 按实际库状态注释已执行过的语句
 
 ALTER TABLE sys_user
     ADD COLUMN must_change_pwd TINYINT NOT NULL DEFAULT 0 COMMENT '1强制下次改密' AFTER status,
@@ -7,7 +7,23 @@ ALTER TABLE sys_user
     ADD COLUMN external_id VARCHAR(128) NULL COMMENT '外部身份ID' AFTER source,
     ADD KEY idx_external (source, external_id);
 
--- admin 用户绑定 admin 角色（DataInitializer 创建的用户 id 按实际替换）
--- INSERT INTO sys_user_role (id, user_id, role_id, create_time)
--- SELECT 1, id, 1, NOW() FROM sys_user WHERE username = 'admin' AND deleted = 0
--- ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
+-- 增加 user_code
+ALTER TABLE sys_user
+    ADD COLUMN user_code VARCHAR(64) NULL COMMENT '用户编码（登录）' AFTER id;
+
+UPDATE sys_user
+SET user_code = COALESCE(user_code, username)
+WHERE user_code IS NULL OR user_code = '';
+
+ALTER TABLE sys_user
+    MODIFY COLUMN user_code VARCHAR(64) NOT NULL COMMENT '用户编码（登录）';
+
+-- username -> user_name（姓名，可重复）
+ALTER TABLE sys_user DROP INDEX uk_username;
+ALTER TABLE sys_user CHANGE COLUMN username user_name VARCHAR(64) NOT NULL COMMENT '姓名';
+ALTER TABLE sys_user ADD KEY idx_user_name (user_name);
+
+ALTER TABLE sys_user ADD UNIQUE KEY uk_user_code (user_code);
+
+-- 去掉无用昵称字段
+ALTER TABLE sys_user DROP COLUMN nickname;

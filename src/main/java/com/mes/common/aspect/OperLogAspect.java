@@ -143,7 +143,7 @@ public class OperLogAspect {
             entity.setUserId(userId);
             SysUser user = sysUserMapper.selectById(userId);
             if (user != null) {
-                entity.setUsername(user.getUsername());
+                entity.setUsername(user.getUserCode());
             }
         } catch (Exception e) {
             log.debug("填充操作人信息失败: {}", e.getMessage());

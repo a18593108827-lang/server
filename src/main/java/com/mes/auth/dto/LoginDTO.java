@@ -9,9 +9,9 @@ import lombok.Data;
 @Data
 public class LoginDTO {
 
-    /** 工号 */
-    @NotBlank(message = "工号不能为空")
-    private String username;
+    /** 用户编码 */
+    @NotBlank(message = "用户编码不能为空")
+    private String userCode;
 
     /** 密码 */
     @NotBlank(message = "密码不能为空")

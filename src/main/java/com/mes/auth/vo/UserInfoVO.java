@@ -11,9 +11,9 @@ public class UserInfoVO {
     /** 用户ID */
     private Long id;
 
-    /** 工号 */
-    private String username;
+    /** 用户编码 */
+    private String userCode;
 
-    /** 昵称 */
-    private String nickname;
+    /** 姓名 */
+    private String userName;
 }
