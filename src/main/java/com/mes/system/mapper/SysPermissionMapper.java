@@ -1,6 +1,8 @@
 package com.mes.system.mapper;
 
+import com.mes.system.dto.UserRoleCodeRow;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
@@ -31,4 +33,17 @@ public interface SysPermissionMapper {
               AND r.status = 1 AND r.deleted = 0
             """)
     List<String> selectRoleCodesByUserId(Long userId);
+
+    @Select("""
+            <script>
+            SELECT ur.user_id AS userId, r.role_code AS roleCode
+            FROM sys_user_role ur
+            INNER JOIN sys_role r ON r.id = ur.role_id AND r.status = 1 AND r.deleted = 0
+            WHERE ur.user_id IN
+            <foreach collection="userIds" item="id" open="(" separator="," close=")">
+              #{id}
+            </foreach>
+            </script>
+            """)
+    List<UserRoleCodeRow> selectRoleCodesByUserIds(@Param("userIds") List<Long> userIds);
 }
