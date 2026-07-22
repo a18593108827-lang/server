@@ -8,6 +8,9 @@ import lombok.Data;
 @Data
 public class SysUserQuery {
 
+    /** 编码/姓名关键字（模糊，OR） */
+    private String keyword;
+
     /** 用户编码（模糊） */
     private String userCode;
 

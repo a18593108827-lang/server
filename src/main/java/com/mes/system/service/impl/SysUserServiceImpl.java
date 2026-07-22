@@ -46,6 +46,10 @@ public class SysUserServiceImpl implements SysUserService {
                 SysUser::getCreateTime,
                 SysUser::getUpdateTime
         );
+        if (StringUtils.hasText(query.getKeyword())) {
+            String keyword = query.getKeyword().trim();
+            qw.and(w -> w.like(SysUser::getUserCode, keyword).or().like(SysUser::getUserName, keyword));
+        }
         if (StringUtils.hasText(query.getUserCode())) {
             qw.like(SysUser::getUserCode, query.getUserCode().trim());
         }
