@@ -1,6 +1,7 @@
 package com.mes.common;
 
 import cn.dev33.satoken.exception.NotLoginException;
+import cn.dev33.satoken.exception.NotPermissionException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -20,6 +21,14 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(NotLoginException.class)
     public R<Void> handleNotLogin(NotLoginException e) {
         return R.fail(ResultCode.UNAUTHORIZED, "未登录或登录已过期");
+    }
+
+    /**
+     * 无权限
+     */
+    @ExceptionHandler(NotPermissionException.class)
+    public R<Void> handleNotPermission(NotPermissionException e) {
+        return R.fail(ResultCode.FORBIDDEN, "无权限");
     }
 
     /**

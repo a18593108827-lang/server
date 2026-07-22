@@ -1,6 +1,7 @@
 package com.mes.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.mes.common.PasswordUtil;
 import com.mes.system.entity.SysUser;
 import com.mes.system.mapper.SysUserMapper;
@@ -11,7 +12,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
 /**
- * 初始化默认管理员：admin / 123456
+ * 初始化默认管理员：admin / 123456，绑定 admin 角色
  */
 @Slf4j
 @Component
@@ -35,6 +36,7 @@ public class DataInitializer implements ApplicationRunner {
         admin.setMustChangePwd(0);
         admin.setSource("local");
         sysUserMapper.insert(admin);
+        sysUserMapper.insertUserRole(IdWorker.getId(), admin.getId());
         log.info("已初始化默认用户 admin / 123456");
     }
 }

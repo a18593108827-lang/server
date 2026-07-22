@@ -3,6 +3,7 @@ package com.mes.auth.service.impl;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.auth.dto.LoginDTO;
+import com.mes.auth.dto.RegisterDTO;
 import com.mes.auth.service.AuthService;
 import com.mes.auth.vo.LoginVO;
 import com.mes.auth.vo.UserInfoVO;
@@ -21,6 +22,22 @@ import org.springframework.stereotype.Service;
 public class AuthServiceImpl implements AuthService {
 
     private final SysUserMapper sysUserMapper;
+
+    @Override
+    public void register(RegisterDTO dto) {
+        Long count = sysUserMapper.selectCount(new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getUserCode, dto.getUserCode()));
+        AssertUtil.isTrue(count == 0, "用户编码已存在");
+
+        SysUser user = new SysUser();
+        user.setUserCode(dto.getUserCode());
+        user.setUserName(dto.getUserName());
+        user.setPassword(PasswordUtil.encode(dto.getPassword()));
+        user.setStatus(1);
+        user.setMustChangePwd(0);
+        user.setSource("local");
+        sysUserMapper.insert(user);
+    }
 
     @Override
     public LoginVO login(LoginDTO dto) {

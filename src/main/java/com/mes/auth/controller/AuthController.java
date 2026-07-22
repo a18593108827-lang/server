@@ -1,6 +1,8 @@
 package com.mes.auth.controller;
 
+import cn.dev33.satoken.annotation.SaCheckPermission;
 import com.mes.auth.dto.LoginDTO;
+import com.mes.auth.dto.RegisterDTO;
 import com.mes.auth.service.AuthService;
 import com.mes.auth.vo.LoginVO;
 import com.mes.auth.vo.UserInfoVO;
@@ -23,6 +25,15 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final AuthService authService;
+
+    /** 注册（需 user:add） */
+    @SaCheckPermission("user:add")
+    @OperLog(module = "认证", action = "注册")
+    @PostMapping("/register")
+    public R<Void> register(@Valid @RequestBody RegisterDTO dto) {
+        authService.register(dto);
+        return R.ok();
+    }
 
     /** 登录 */
     @OperLog(module = "认证", action = "登录")
