@@ -15,6 +15,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -73,6 +74,14 @@ public class SysUserController {
     @PutMapping("/{id}/password/reset")
     public R<Void> resetPassword(@PathVariable Long id, @Valid @RequestBody SysUserResetPwdDTO dto) {
         sysUserService.resetPassword(id, dto);
+        return R.ok();
+    }
+
+    @SaCheckPermission("user:kick")
+    @OperLog(module = "用户", action = "踢人下线")
+    @PostMapping("/{id}/kick")
+    public R<Void> kick(@PathVariable Long id) {
+        sysUserService.kick(id);
         return R.ok();
     }
 }

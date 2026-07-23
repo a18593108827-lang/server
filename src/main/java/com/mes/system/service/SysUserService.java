@@ -26,4 +26,6 @@ public interface SysUserService {
     void assignRoles(Long id, SysUserRoleAssignDTO dto);
 
     void resetPassword(Long id, SysUserResetPwdDTO dto);
+
+    void kick(Long id);
 }

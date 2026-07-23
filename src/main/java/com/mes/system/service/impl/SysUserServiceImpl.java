@@ -195,4 +195,12 @@ public class SysUserServiceImpl implements SysUserService {
         sysUserMapper.updateById(user);
         StpUtil.logout(id);
     }
+
+    @Override
+    public void kick(Long id) {
+        SysUser user = sysUserMapper.selectById(id);
+        AssertUtil.notNull(user, "用户不存在");
+        AssertUtil.isFalse(StpUtil.getLoginIdAsLong() == id, "不能踢自己下线");
+        StpUtil.logout(id);
+    }
 }
