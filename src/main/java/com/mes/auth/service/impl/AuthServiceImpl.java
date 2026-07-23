@@ -9,10 +9,22 @@ import com.mes.auth.vo.LoginVO;
 import com.mes.auth.vo.UserInfoVO;
 import com.mes.common.AssertUtil;
 import com.mes.common.PasswordUtil;
+import com.mes.system.entity.SysPermission;
 import com.mes.system.entity.SysUser;
+import com.mes.system.mapper.SysPermMapper;
+import com.mes.system.mapper.SysPermissionMapper;
 import com.mes.system.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 认证服务实现
@@ -22,6 +34,8 @@ import org.springframework.stereotype.Service;
 public class AuthServiceImpl implements AuthService {
 
     private final SysUserMapper sysUserMapper;
+    private final SysPermissionMapper sysPermissionMapper;
+    private final SysPermMapper sysPermMapper;
 
     @Override
     public void register(RegisterDTO dto) {
@@ -66,10 +80,79 @@ public class AuthServiceImpl implements AuthService {
         SysUser user = sysUserMapper.selectById(userId);
         AssertUtil.notNull(user, "用户不存在");
 
+        List<String> roles = sysPermissionMapper.selectRoleCodesByUserId(userId);
+        List<String> permissions = sysPermissionMapper.selectPermCodesByUserId(userId);
+        Set<String> permSet = new HashSet<>(permissions);
+
         UserInfoVO vo = new UserInfoVO();
         vo.setId(user.getId());
         vo.setUserCode(user.getUserCode());
         vo.setUserName(user.getUserName());
+        vo.setMustChangePwd(user.getMustChangePwd() == null ? 0 : user.getMustChangePwd());
+        vo.setRoles(roles);
+        vo.setPermissions(permissions);
+        vo.setMenus(buildMenus(permSet));
         return vo;
+    }
+
+    private List<UserInfoVO.MenuVO> buildMenus(Set<String> permSet) {
+        List<SysPermission> list = sysPermMapper.selectList(new LambdaQueryWrapper<SysPermission>()
+                .eq(SysPermission::getStatus, 1)
+                .in(SysPermission::getPermType, 1, 2)
+                .orderByAsc(SysPermission::getSortNo)
+                .orderByAsc(SysPermission::getId));
+
+        Map<Long, UserInfoVO.MenuVO> map = new HashMap<>();
+        for (SysPermission p : list) {
+            UserInfoVO.MenuVO m = new UserInfoVO.MenuVO();
+            m.setId(p.getId());
+            m.setParentId(p.getParentId());
+            m.setPermType(p.getPermType());
+            m.setPermCode(p.getPermCode());
+            m.setPermName(p.getPermName());
+            m.setPath(p.getPath());
+            m.setIcon(p.getIcon());
+            m.setSortNo(p.getSortNo());
+            map.put(p.getId(), m);
+        }
+
+        List<UserInfoVO.MenuVO> roots = new ArrayList<>();
+        for (UserInfoVO.MenuVO m : map.values()) {
+            Long parentId = m.getParentId() == null ? 0L : m.getParentId();
+            if (parentId == 0L || !map.containsKey(parentId)) {
+                roots.add(m);
+            } else {
+                map.get(parentId).getChildren().add(m);
+            }
+        }
+        sortMenus(roots);
+        return filterMenus(roots, permSet);
+    }
+
+    private List<UserInfoVO.MenuVO> filterMenus(List<UserInfoVO.MenuVO> nodes, Set<String> permSet) {
+        List<UserInfoVO.MenuVO> result = new ArrayList<>();
+        for (UserInfoVO.MenuVO node : nodes) {
+            List<UserInfoVO.MenuVO> children = filterMenus(node.getChildren(), permSet);
+            boolean selfVisible = false;
+            if (node.getPermType() != null && node.getPermType() == 2) {
+                selfVisible = StringUtils.hasText(node.getPermCode()) && permSet.contains(node.getPermCode());
+            } else if (node.getPermType() != null && node.getPermType() == 1) {
+                selfVisible = !children.isEmpty();
+            }
+            if (selfVisible) {
+                node.setChildren(children);
+                result.add(node);
+            }
+        }
+        return result;
+    }
+
+    private void sortMenus(List<UserInfoVO.MenuVO> nodes) {
+        nodes.sort(Comparator
+                .comparing(UserInfoVO.MenuVO::getSortNo, Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(UserInfoVO.MenuVO::getId));
+        for (UserInfoVO.MenuVO n : nodes) {
+            sortMenus(n.getChildren());
+        }
     }
 }

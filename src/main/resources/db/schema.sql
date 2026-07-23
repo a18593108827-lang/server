@@ -156,32 +156,57 @@ INSERT INTO sys_role (id, role_code, role_name, remark, status, create_time, upd
 ON DUPLICATE KEY UPDATE role_name = VALUES(role_name);
 
 -- =========================
--- 种子：权限树（系统管理）
+-- 种子：权限树
 -- perm_type: 1目录 2菜单 3按钮
 -- =========================
 INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path, icon, sort_no, status, create_time, update_time, deleted) VALUES
+-- 生产执行
+(200, 0,   1, NULL,              '生产执行', NULL,              'factory',          10, 1, NOW(), NOW(), 0),
+(210, 200, 2, 'dashboard:view',  '看板',     '/app/dashboard',  'layout-dashboard', 11, 1, NOW(), NOW(), 0),
+(220, 200, 2, 'lot:list',        '批次',     '/app/lots',       'package',          12, 1, NOW(), NOW(), 0),
+(230, 200, 2, 'wip:list',        '在制',     '/app/wip',        'boxes',            13, 1, NOW(), NOW(), 0),
+(240, 200, 2, 'eqp:list',        '设备',     '/app/equipment',  'factory',          14, 1, NOW(), NOW(), 0),
+(250, 200, 2, 'route:list',      '路线',     '/app/route',      'map',              15, 1, NOW(), NOW(), 0),
+(260, 200, 2, 'hold:list',       '锁批',     '/app/hold',       'pause-circle',     16, 1, NOW(), NOW(), 0),
+(261, 260, 3, 'hold:create',     '发起锁批', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(262, 260, 3, 'hold:release',    '解锁',     NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(270, 200, 2, 'alarm:list',      '报警',     '/app/alarm',      'bell',             17, 1, NOW(), NOW(), 0),
+(280, 200, 2, 'history:list',    '追溯',     '/app/history',    'history',          18, 1, NOW(), NOW(), 0),
+(290, 200, 2, 'track:view',      '现场台',   '/track',          'lock',             19, 1, NOW(), NOW(), 0),
+(291, 290, 3, 'track:track-in',  'Track In', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(292, 290, 3, 'track:track-out', 'Track Out',NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+-- 系统管理
 (100, 0,   1, 'system',              '系统管理', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
-(110, 100, 2, 'system:user',         '用户管理', '/system/user',         NULL,       10,  1, NOW(), NOW(), 0),
+(110, 100, 2, 'system:user',         '用户管理', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
 (111, 110, 3, 'user:list',           '用户查询', NULL,                   NULL,       1,   1, NOW(), NOW(), 0),
 (112, 110, 3, 'user:add',            '用户新增', NULL,                   NULL,       2,   1, NOW(), NOW(), 0),
 (113, 110, 3, 'user:edit',           '用户编辑', NULL,                   NULL,       3,   1, NOW(), NOW(), 0),
 (114, 110, 3, 'user:reset-pwd',      '重置密码', NULL,                   NULL,       4,   1, NOW(), NOW(), 0),
 (115, 110, 3, 'user:assign-role',    '分配角色', NULL,                   NULL,       5,   1, NOW(), NOW(), 0),
 (116, 110, 3, 'user:kick',           '踢人下线', NULL,                   NULL,       6,   1, NOW(), NOW(), 0),
-(120, 100, 2, 'system:role',         '角色管理', '/system/role',         NULL,       20,  1, NOW(), NOW(), 0),
+(120, 100, 2, 'system:role',         '角色管理', '/app/auth/roles',      NULL,       20,  1, NOW(), NOW(), 0),
 (121, 120, 3, 'role:list',           '角色查询', NULL,                   NULL,       1,   1, NOW(), NOW(), 0),
 (122, 120, 3, 'role:add',            '角色新增', NULL,                   NULL,       2,   1, NOW(), NOW(), 0),
 (123, 120, 3, 'role:edit',           '角色编辑', NULL,                   NULL,       3,   1, NOW(), NOW(), 0),
 (124, 120, 3, 'role:assign-perm',    '分配权限', NULL,                   NULL,       4,   1, NOW(), NOW(), 0),
-(130, 100, 2, 'system:permission',   '权限管理', '/system/permission',   NULL,       30,  1, NOW(), NOW(), 0),
+(130, 100, 2, 'system:permission',   '权限管理', '/app/auth/perms',      NULL,       30,  1, NOW(), NOW(), 0),
 (131, 130, 3, 'perm:list',           '权限查询', NULL,                   NULL,       1,   1, NOW(), NOW(), 0),
 (132, 130, 3, 'perm:add',            '权限新增', NULL,                   NULL,       2,   1, NOW(), NOW(), 0),
 (133, 130, 3, 'perm:edit',           '权限编辑', NULL,                   NULL,       3,   1, NOW(), NOW(), 0),
-(140, 100, 2, 'system:perm-apply',   '权限申请', '/system/perm-apply',   NULL,       40,  1, NOW(), NOW(), 0),
+(140, 100, 2, 'system:perm-apply',   '权限申请', '/app/auth/requests',   NULL,       40,  1, NOW(), NOW(), 0),
 (141, 140, 3, 'perm:apply',          '发起申请', NULL,                   NULL,       1,   1, NOW(), NOW(), 0),
-(150, 100, 2, 'system:perm-approve', '权限审批', '/system/perm-approve', NULL,       50,  1, NOW(), NOW(), 0),
+(150, 100, 2, 'system:perm-approve', '权限审批', '/app/auth/approvals',  NULL,       50,  1, NOW(), NOW(), 0),
 (151, 150, 3, 'perm:approve',        '审批权限', NULL,                   NULL,       1,   1, NOW(), NOW(), 0)
-ON DUPLICATE KEY UPDATE perm_name = VALUES(perm_name);
+ON DUPLICATE KEY UPDATE
+  parent_id = VALUES(parent_id),
+  perm_type = VALUES(perm_type),
+  perm_code = VALUES(perm_code),
+  perm_name = VALUES(perm_name),
+  path = VALUES(path),
+  icon = VALUES(icon),
+  sort_no = VALUES(sort_no),
+  status = VALUES(status),
+  update_time = NOW();
 
 -- =========================
 -- 种子：admin 绑定全部权限
@@ -207,21 +232,62 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1018, 1, 140, NOW()),
 (1019, 1, 141, NOW()),
 (1020, 1, 150, NOW()),
-(1021, 1, 151, NOW())
+(1021, 1, 151, NOW()),
+(1100, 1, 200, NOW()),
+(1101, 1, 210, NOW()),
+(1102, 1, 220, NOW()),
+(1103, 1, 230, NOW()),
+(1104, 1, 240, NOW()),
+(1105, 1, 250, NOW()),
+(1106, 1, 260, NOW()),
+(1107, 1, 261, NOW()),
+(1108, 1, 262, NOW()),
+(1109, 1, 270, NOW()),
+(1110, 1, 280, NOW()),
+(1111, 1, 290, NOW()),
+(1112, 1, 291, NOW()),
+(1113, 1, 292, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
--- supervisor：申请 + 审批
+-- supervisor：生产部分 + 申请审批
 INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (2001, 4, 140, NOW()),
 (2002, 4, 141, NOW()),
 (2003, 4, 150, NOW()),
-(2004, 4, 151, NOW())
+(2004, 4, 151, NOW()),
+(1400, 4, 200, NOW()),
+(1401, 4, 210, NOW()),
+(1402, 4, 230, NOW()),
+(1403, 4, 260, NOW()),
+(1404, 4, 261, NOW()),
+(1405, 4, 262, NOW()),
+(1406, 4, 270, NOW()),
+(1407, 4, 100, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
--- operator / process_eng：可发起申请
+-- operator：申请 + 现场
 INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (3001, 2, 140, NOW()),
 (3002, 2, 141, NOW()),
+(1200, 2, 200, NOW()),
+(1201, 2, 210, NOW()),
+(1202, 2, 230, NOW()),
+(1203, 2, 290, NOW()),
+(1204, 2, 291, NOW()),
+(1205, 2, 292, NOW())
+ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
+
+-- process_eng：申请 + 工艺相关
+INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (3003, 3, 140, NOW()),
-(3004, 3, 141, NOW())
+(3004, 3, 141, NOW()),
+(1300, 3, 200, NOW()),
+(1301, 3, 210, NOW()),
+(1302, 3, 220, NOW()),
+(1303, 3, 230, NOW()),
+(1304, 3, 240, NOW()),
+(1305, 3, 250, NOW()),
+(1306, 3, 260, NOW()),
+(1307, 3, 270, NOW()),
+(1308, 3, 280, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
