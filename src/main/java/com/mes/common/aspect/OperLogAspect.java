@@ -108,8 +108,14 @@ public class OperLogAspect {
     private Object maskSensitive(Object arg) {
         try {
             String json = JSONUtil.toJsonStr(arg);
-            if (json.contains("password")) {
-                return JSONUtil.parseObj(json).set("password", "******");
+            if (json.contains("password") || json.contains("Password")) {
+                var obj = JSONUtil.parseObj(json);
+                for (String key : obj.keySet()) {
+                    if (key.toLowerCase().contains("password")) {
+                        obj.set(key, "******");
+                    }
+                }
+                return obj;
             }
             return JSONUtil.parse(json);
         } catch (Exception e) {

@@ -1,5 +1,6 @@
 package com.mes.auth.service;
 
+import com.mes.auth.dto.ChangePasswordDTO;
 import com.mes.auth.dto.LoginDTO;
 import com.mes.auth.dto.RegisterDTO;
 import com.mes.auth.vo.LoginVO;
@@ -21,4 +22,7 @@ public interface AuthService {
 
     /** 当前用户信息 */
     UserInfoVO getInfo();
+
+    /** 本人修改密码（成功后注销会话） */
+    void changePassword(ChangePasswordDTO dto);
 }

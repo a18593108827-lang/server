@@ -2,6 +2,7 @@ package com.mes.auth.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.mes.auth.dto.ChangePasswordDTO;
 import com.mes.auth.dto.LoginDTO;
 import com.mes.auth.dto.RegisterDTO;
 import com.mes.auth.service.AuthService;
@@ -93,6 +94,21 @@ public class AuthServiceImpl implements AuthService {
         vo.setPermissions(permissions);
         vo.setMenus(buildMenus(permSet));
         return vo;
+    }
+
+    @Override
+    public void changePassword(ChangePasswordDTO dto) {
+        long userId = StpUtil.getLoginIdAsLong();
+        SysUser user = sysUserMapper.selectById(userId);
+        AssertUtil.notNull(user, "用户不存在");
+        AssertUtil.isTrue(PasswordUtil.matches(dto.getOldPassword(), user.getPassword()), "当前密码错误");
+        AssertUtil.isTrue(!dto.getOldPassword().equals(dto.getNewPassword()), "新密码不能与旧密码相同");
+        AssertUtil.isTrue(dto.getNewPassword().length() >= 6, "新密码至少6位");
+
+        user.setPassword(PasswordUtil.encode(dto.getNewPassword()));
+        user.setMustChangePwd(0);
+        sysUserMapper.updateById(user);
+        StpUtil.logout();
     }
 
     private List<UserInfoVO.MenuVO> buildMenus(Set<String> permSet) {
