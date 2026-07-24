@@ -167,6 +167,8 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (230, 200, 2, 'wip:list',        '在制',     '/app/wip',        'boxes',            13, 1, NOW(), NOW(), 0),
 (240, 200, 2, 'eqp:list',        '设备',     '/app/equipment',  'factory',          14, 1, NOW(), NOW(), 0),
 (250, 200, 2, 'route:list',      '路线',     '/app/route',      'map',              15, 1, NOW(), NOW(), 0),
+(251, 250, 3, 'route:add',       '路线新增', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(252, 250, 3, 'route:edit',      '路线编辑', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
 (260, 200, 2, 'hold:list',       '锁批',     '/app/hold',       'pause-circle',     16, 1, NOW(), NOW(), 0),
 (261, 260, 3, 'hold:create',     '发起锁批', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (262, 260, 3, 'hold:release',    '解锁',     NULL,              NULL,               2,  1, NOW(), NOW(), 0),
@@ -239,6 +241,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1103, 1, 230, NOW()),
 (1104, 1, 240, NOW()),
 (1105, 1, 250, NOW()),
+(1114, 1, 251, NOW()),
+(1115, 1, 252, NOW()),
 (1106, 1, 260, NOW()),
 (1107, 1, 261, NOW()),
 (1108, 1, 262, NOW()),
@@ -287,7 +291,99 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1303, 3, 230, NOW()),
 (1304, 3, 240, NOW()),
 (1305, 3, 250, NOW()),
+(1309, 3, 251, NOW()),
+(1310, 3, 252, NOW()),
 (1306, 3, 260, NOW()),
 (1307, 3, 270, NOW()),
 (1308, 3, 280, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
+
+-- =========================
+-- Route 模块表（详见 migrate_route.sql）
+-- =========================
+CREATE TABLE IF NOT EXISTS mes_step (
+    id          BIGINT        NOT NULL COMMENT '主键',
+    step_code   VARCHAR(64)   NOT NULL COMMENT '工序编码',
+    step_name   VARCHAR(128)  NOT NULL COMMENT '工序名称',
+    step_type   TINYINT       NOT NULL DEFAULT 1 COMMENT '1加工 2量测 3其它',
+    eqp_type    VARCHAR(64)            COMMENT '设备类型预留',
+    status      TINYINT       NOT NULL DEFAULT 1 COMMENT '1正常 0禁用',
+    remark      VARCHAR(255)           COMMENT '备注',
+    create_time DATETIME               COMMENT '创建时间',
+    update_time DATETIME               COMMENT '更新时间',
+    deleted     TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_step_code (step_code),
+    KEY idx_step_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工序定义';
+
+CREATE TABLE IF NOT EXISTS mes_route (
+    id           BIGINT        NOT NULL COMMENT '主键',
+    route_code   VARCHAR(64)   NOT NULL COMMENT '路线编码',
+    route_name   VARCHAR(128)  NOT NULL COMMENT '路线名称',
+    product_code VARCHAR(64)            COMMENT '产品编码',
+    status       TINYINT       NOT NULL DEFAULT 1 COMMENT '1正常 0停用',
+    remark       VARCHAR(255)           COMMENT '备注',
+    create_time  DATETIME               COMMENT '创建时间',
+    update_time  DATETIME               COMMENT '更新时间',
+    deleted      TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_route_code (route_code),
+    KEY idx_route_product (product_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工艺路线';
+
+CREATE TABLE IF NOT EXISTS mes_route_version (
+    id            BIGINT       NOT NULL COMMENT '主键',
+    route_id      BIGINT       NOT NULL COMMENT '路线ID',
+    version_no    INT          NOT NULL COMMENT '版本号',
+    status        VARCHAR(16)  NOT NULL DEFAULT 'draft' COMMENT 'draft/active/archived',
+    published_at  DATETIME              COMMENT '发布时间',
+    published_by  BIGINT                COMMENT '发布人',
+    remark        VARCHAR(255)          COMMENT '备注',
+    create_time   DATETIME              COMMENT '创建时间',
+    update_time   DATETIME              COMMENT '更新时间',
+    deleted       TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_route_ver (route_id, version_no),
+    KEY idx_route_ver_status (route_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工艺路线版本';
+
+CREATE TABLE IF NOT EXISTS mes_route_step (
+    id            BIGINT   NOT NULL COMMENT '主键',
+    version_id    BIGINT   NOT NULL COMMENT '版本ID',
+    step_id       BIGINT   NOT NULL COMMENT '工序ID',
+    sort_no       INT      NOT NULL COMMENT '顺序号',
+    next_sort_no  INT               COMMENT '下一站顺序号，空结束',
+    create_time   DATETIME          COMMENT '创建时间',
+    update_time   DATETIME          COMMENT '更新时间',
+    deleted       TINYINT  NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ver_sort (version_id, sort_no),
+    KEY idx_ver_step (version_id, step_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='路线版本步骤';
+
+INSERT INTO mes_step (id, step_code, step_name, step_type, eqp_type, status, remark, create_time, update_time, deleted) VALUES
+(5001, 'PHOTO-01', '光刻',         1, NULL, 1, NULL, NOW(), NOW(), 0),
+(5002, 'ETCH-01',  '刻蚀一',       1, NULL, 1, NULL, NOW(), NOW(), 0),
+(5003, 'ETCH-02',  '刻蚀二',       1, NULL, 1, NULL, NOW(), NOW(), 0),
+(5004, 'CMP-01',   '化学机械抛光', 1, NULL, 1, NULL, NOW(), NOW(), 0),
+(5005, 'DIFF-03',  '扩散',         1, NULL, 1, NULL, NOW(), NOW(), 0),
+(5006, 'METRO-01', '量测',         2, NULL, 1, NULL, NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE step_name = VALUES(step_name), update_time = NOW();
+
+INSERT INTO mes_route (id, route_code, route_name, product_code, status, remark, create_time, update_time, deleted) VALUES
+(5100, 'WAFER-N7-MAIN', '晶圆主工艺', 'N7', 1, '演示路线', NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE route_name = VALUES(route_name), update_time = NOW();
+
+INSERT INTO mes_route_version (id, route_id, version_no, status, published_at, published_by, remark, create_time, update_time, deleted) VALUES
+(5101, 5100, 1, 'active', NOW(), 1, '初始发布', NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE status = VALUES(status), update_time = NOW();
+
+INSERT INTO mes_route_step (id, version_id, step_id, sort_no, next_sort_no, create_time, update_time, deleted) VALUES
+(5201, 5101, 5001, 10, 20,   NOW(), NOW(), 0),
+(5202, 5101, 5002, 20, 30,   NOW(), NOW(), 0),
+(5203, 5101, 5003, 30, 40,   NOW(), NOW(), 0),
+(5204, 5101, 5004, 40, 50,   NOW(), NOW(), 0),
+(5205, 5101, 5005, 50, 60,   NOW(), NOW(), 0),
+(5206, 5101, 5006, 60, NULL, NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE step_id = VALUES(step_id), next_sort_no = VALUES(next_sort_no), update_time = NOW();
