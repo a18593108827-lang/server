@@ -164,6 +164,9 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (200, 0,   1, NULL,              '生产执行', NULL,              'factory',          10, 1, NOW(), NOW(), 0),
 (210, 200, 2, 'dashboard:view',  '看板',     '/app/dashboard',  'layout-dashboard', 11, 1, NOW(), NOW(), 0),
 (220, 200, 2, 'lot:list',        '批次',     '/app/lots',       'package',          12, 1, NOW(), NOW(), 0),
+(221, 220, 3, 'lot:add',         '批次新增', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(222, 220, 3, 'lot:edit',        '批次编辑', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(223, 220, 3, 'lot:release',     '批次放行', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (230, 200, 2, 'wip:list',        '在制',     '/app/wip',        'boxes',            13, 1, NOW(), NOW(), 0),
 (240, 200, 2, 'eqp:list',        '设备',     '/app/equipment',  'factory',          14, 1, NOW(), NOW(), 0),
 (250, 200, 2, 'route:list',      '路线',     '/app/route',      'map',              15, 1, NOW(), NOW(), 0),
@@ -238,6 +241,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1100, 1, 200, NOW()),
 (1101, 1, 210, NOW()),
 (1102, 1, 220, NOW()),
+(1116, 1, 221, NOW()),
+(1117, 1, 222, NOW()),
+(1118, 1, 223, NOW()),
 (1103, 1, 230, NOW()),
 (1104, 1, 240, NOW()),
 (1105, 1, 250, NOW()),
@@ -288,6 +294,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1300, 3, 200, NOW()),
 (1301, 3, 210, NOW()),
 (1302, 3, 220, NOW()),
+(1311, 3, 221, NOW()),
+(1312, 3, 222, NOW()),
+(1313, 3, 223, NOW()),
 (1303, 3, 230, NOW()),
 (1304, 3, 240, NOW()),
 (1305, 3, 250, NOW()),
@@ -387,3 +396,45 @@ INSERT INTO mes_route_step (id, version_id, step_id, sort_no, next_sort_no, crea
 (5205, 5101, 5005, 50, 60,   NOW(), NOW(), 0),
 (5206, 5101, 5006, 60, NULL, NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE step_id = VALUES(step_id), next_sort_no = VALUES(next_sort_no), update_time = NOW();
+
+-- =========================
+-- Lot 模块表（详见 migrate_lot.sql）
+-- =========================
+CREATE TABLE IF NOT EXISTS mes_lot (
+    id                BIGINT        NOT NULL COMMENT '主键',
+    lot_no            VARCHAR(64)   NOT NULL COMMENT '批次号',
+    product_code      VARCHAR(64)            COMMENT '产品编码',
+    qty               INT           NOT NULL DEFAULT 0 COMMENT '数量',
+    priority          INT           NOT NULL DEFAULT 50 COMMENT '优先级1-100，越大越急，默认50',
+    customer_lot      VARCHAR(64)            COMMENT '客户Lot',
+    route_id          BIGINT                 COMMENT '路线ID',
+    route_version_id  BIGINT                 COMMENT '放行快照版本ID，Release后锁定',
+    status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT 'created/released/completed/scrapped',
+    remark            VARCHAR(512)           COMMENT '备注',
+    version           INT           NOT NULL DEFAULT 0 COMMENT '乐观锁',
+    create_by         BIGINT                 COMMENT '创建人',
+    create_time       DATETIME               COMMENT '创建时间',
+    update_by         BIGINT                 COMMENT '更新人',
+    update_time       DATETIME               COMMENT '更新时间',
+    deleted           TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_lot_no (lot_no),
+    KEY idx_lot_status (status),
+    KEY idx_lot_product (product_code),
+    KEY idx_lot_route (route_id),
+    KEY idx_lot_route_ver (route_version_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次';
+
+INSERT INTO mes_lot (
+  id, lot_no, product_code, qty, priority, customer_lot,
+  route_id, route_version_id, status, remark, version,
+  create_by, create_time, update_by, update_time, deleted
+) VALUES
+(6001, 'LOT-N7-DEMO-01', 'N7', 25, 50, NULL, 5100, NULL, 'created', '未放行演示', 0, 1, NOW(), 1, NOW(), 0),
+(6002, 'LOT-N7-DEMO-02', 'N7', 25, 80, 'CUST-001', 5100, 5101, 'released', '已放行演示（绑 active v1）', 0, 1, NOW(), 1, NOW(), 0)
+ON DUPLICATE KEY UPDATE
+  product_code = VALUES(product_code),
+  qty = VALUES(qty),
+  status = VALUES(status),
+  route_version_id = VALUES(route_version_id),
+  update_time = NOW();
