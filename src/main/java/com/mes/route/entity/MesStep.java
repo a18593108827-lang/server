@@ -1,0 +1,39 @@
+package com.mes.route.entity;
+
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import com.mes.common.BaseEntity;
+import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+/**
+ * 工序定义（可复用，挂到路线版本步骤上）
+ */
+@Data
+@EqualsAndHashCode(callSuper = true)
+@TableName("mes_step")
+public class MesStep extends BaseEntity {
+
+    /** 主键 */
+    @TableId(type = IdType.ASSIGN_ID)
+    private Long id;
+
+    /** 工序编码（唯一） */
+    private String stepCode;
+
+    /** 工序名称 */
+    private String stepName;
+
+    /** 类型：1加工 2量测 3其它 */
+    private Integer stepType;
+
+    /** 设备类型（预留） */
+    private String eqpType;
+
+    /** 状态：1正常 0禁用 */
+    private Integer status;
+
+    /** 备注 */
+    private String remark;
+}
