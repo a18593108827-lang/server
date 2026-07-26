@@ -10,7 +10,9 @@ import com.mes.lot.dto.MesLotQuery;
 import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
+import com.mes.lot.mapper.MesLotNoSeqMapper;
 import com.mes.lot.service.MesLotService;
+import com.mes.lot.vo.MesLotCreateResultVO;
 import com.mes.lot.vo.MesLotStepVO;
 import com.mes.lot.vo.MesLotVO;
 import com.mes.route.entity.MesRoute;
@@ -26,6 +28,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -47,8 +51,12 @@ public class MesLotServiceImpl implements MesLotService {
     public static final String STATUS_RELEASED = "released";
     /** Route 生效版本状态 */
     public static final String ROUTE_ACTIVE = "active";
+    /** 厂内批次号前缀 */
+    public static final String LOT_NO_PREFIX = "LOT";
+    private static final DateTimeFormatter LOT_DAY = DateTimeFormatter.BASIC_ISO_DATE;
 
     private final MesLotMapper mesLotMapper;
+    private final MesLotNoSeqMapper mesLotNoSeqMapper;
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
     private final MesRouteStepMapper mesRouteStepMapper;
@@ -91,10 +99,14 @@ public class MesLotServiceImpl implements MesLotService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public Long create(MesLotCreateDTO dto) {
-        String lotNo = dto.getLotNo().trim();
-        Long count = mesLotMapper.selectCount(new LambdaQueryWrapper<MesLot>().eq(MesLot::getLotNo, lotNo));
-        AssertUtil.isTrue(count == 0, "批次号已存在");
+    public MesLotCreateResultVO create(MesLotCreateDTO dto) {
+        String lotNo = blankToNull(dto.getLotNo());
+        if (lotNo == null) {
+            lotNo = nextLotNo();
+        } else {
+            Long count = mesLotMapper.selectCount(new LambdaQueryWrapper<MesLot>().eq(MesLot::getLotNo, lotNo));
+            AssertUtil.isTrue(count == 0, "批次号已存在");
+        }
 
         if (dto.getRouteId() != null) {
             assertRouteUsable(dto.getRouteId());
@@ -118,7 +130,16 @@ public class MesLotServiceImpl implements MesLotService {
         lot.setCreateBy(userId);
         lot.setUpdateBy(userId);
         mesLotMapper.insert(lot);
-        return lot.getId();
+        return new MesLotCreateResultVO(lot.getId(), lotNo);
+    }
+
+    /** 生成 LOT-yyyyMMdd-流水（按日原子取号） */
+    private String nextLotNo() {
+        String day = LocalDate.now().format(LOT_DAY);
+        mesLotNoSeqMapper.bump(day);
+        long seq = mesLotNoSeqMapper.lastInsertId();
+        AssertUtil.isTrue(seq > 0, "批次号生成失败");
+        return LOT_NO_PREFIX + "-" + day + "-" + String.format("%03d", seq);
     }
 
     @Override

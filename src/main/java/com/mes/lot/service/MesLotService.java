@@ -4,6 +4,7 @@ import com.mes.common.PageResult;
 import com.mes.lot.dto.MesLotCreateDTO;
 import com.mes.lot.dto.MesLotQuery;
 import com.mes.lot.dto.MesLotUpdateDTO;
+import com.mes.lot.vo.MesLotCreateResultVO;
 import com.mes.lot.vo.MesLotVO;
 
 /** 批次服务 */
@@ -12,8 +13,8 @@ public interface MesLotService {
     /** 分页列表 */
     PageResult<MesLotVO> page(MesLotQuery query);
 
-    /** 新建批次，返回 ID */
-    Long create(MesLotCreateDTO dto);
+    /** 新建批次；lotNo 空则自动生成 LOT-yyyyMMdd-流水 */
+    MesLotCreateResultVO create(MesLotCreateDTO dto);
 
     /** 详情（含路线摘要；已放行含步骤） */
     MesLotVO get(Long id);

@@ -8,6 +8,7 @@ import com.mes.lot.dto.MesLotCreateDTO;
 import com.mes.lot.dto.MesLotQuery;
 import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.service.MesLotService;
+import com.mes.lot.vo.MesLotCreateResultVO;
 import com.mes.lot.vo.MesLotVO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -18,9 +19,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.HashMap;
-import java.util.Map;
 
 /**
  * 批次接口：创建 / 改属性 / 放行绑 Route 版本快照
@@ -39,15 +37,12 @@ public class MesLotController {
         return R.ok(mesLotService.page(query));
     }
 
-    /** 新建批次 */
+    /** 新建批次（lotNo 空则自动生成） */
     @SaCheckPermission("lot:add")
     @OperLog(module = "Lot", action = "新建批次")
     @PostMapping
-    public R<Map<String, Long>> create(@Valid @RequestBody MesLotCreateDTO dto) {
-        Long id = mesLotService.create(dto);
-        Map<String, Long> data = new HashMap<>(1);
-        data.put("id", id);
-        return R.ok(data);
+    public R<MesLotCreateResultVO> create(@Valid @RequestBody MesLotCreateDTO dto) {
+        return R.ok(mesLotService.create(dto));
     }
 
     /** 详情（含路线 / 快照步骤） */

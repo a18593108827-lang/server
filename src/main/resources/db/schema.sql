@@ -425,6 +425,12 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     KEY idx_lot_route_ver (route_version_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次';
 
+CREATE TABLE IF NOT EXISTS mes_lot_no_seq (
+    seq_day  CHAR(8) NOT NULL COMMENT 'yyyyMMdd',
+    next_no  INT     NOT NULL COMMENT '当日已分配流水（当前最大值）',
+    PRIMARY KEY (seq_day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次号按日流水';
+
 INSERT INTO mes_lot (
   id, lot_no, product_code, qty, priority, customer_lot,
   route_id, route_version_id, status, remark, version,

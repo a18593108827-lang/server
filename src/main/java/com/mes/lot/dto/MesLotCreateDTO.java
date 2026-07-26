@@ -2,7 +2,6 @@ package com.mes.lot.dto;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
@@ -10,7 +9,9 @@ import lombok.Data;
 @Data
 public class MesLotCreateDTO {
 
-    @NotBlank(message = "批次号不能为空")
+    /**
+     * 批次号（可选）。空则服务端按 LOT-yyyyMMdd-流水 自动生成；填则须唯一。
+     */
     private String lotNo;
 
     /** 产品编码（可选） */

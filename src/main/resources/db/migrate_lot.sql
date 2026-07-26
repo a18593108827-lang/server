@@ -30,6 +30,12 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     KEY idx_lot_route_ver (route_version_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次';
 
+CREATE TABLE IF NOT EXISTS mes_lot_no_seq (
+    seq_day  CHAR(8) NOT NULL COMMENT 'yyyyMMdd',
+    next_no  INT     NOT NULL COMMENT '当日已分配流水（当前最大值）',
+    PRIMARY KEY (seq_day)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次号按日流水';
+
 -- 已建表时补默认/注释（可重复执行）
 ALTER TABLE mes_lot
   MODIFY COLUMN priority INT NOT NULL DEFAULT 50 COMMENT '优先级1-100，越大越急，默认50';
