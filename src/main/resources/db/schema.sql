@@ -463,6 +463,30 @@ CREATE TABLE IF NOT EXISTS mes_tx_log (
     KEY idx_tx_type_time (tx_type, create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Track事务履历（只追加）';
 
+-- =========================
+-- WIP 在制投影（详见 migrate_wip.sql）
+-- status: wait待加工 / processing加工中 / held锁批
+-- =========================
+CREATE TABLE IF NOT EXISTS mes_wip_lot (
+    lot_id            BIGINT        NOT NULL COMMENT '批次ID，同mes_lot.id',
+    lot_no            VARCHAR(64)   NOT NULL COMMENT '批次号冗余',
+    product_code      VARCHAR(64)            COMMENT '产品编码',
+    qty               INT           NOT NULL DEFAULT 0 COMMENT '数量',
+    priority          INT           NOT NULL DEFAULT 50 COMMENT '优先级1-100，越大越急',
+    customer_lot      VARCHAR(64)            COMMENT '客户Lot',
+    status            VARCHAR(32)   NOT NULL COMMENT '在制状态: wait待加工/processing加工中/held锁批',
+    current_sort_no   INT                    COMMENT '当前站顺序号（快照内）',
+    current_step_id   BIGINT                 COMMENT '当前工序ID',
+    current_eqp_id    BIGINT                 COMMENT '当前设备ID（TrackIn后可空）',
+    route_id          BIGINT                 COMMENT '路线ID',
+    route_version_id  BIGINT                 COMMENT '放行快照版本ID',
+    update_time       DATETIME      NOT NULL COMMENT '投影更新时间',
+    PRIMARY KEY (lot_id),
+    UNIQUE KEY uk_wip_lot_no (lot_no),
+    KEY idx_wip_status_sort (status, current_sort_no),
+    KEY idx_wip_product (product_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='在制投影（WIP只读；Track同事务同步）';
+
 INSERT INTO mes_lot (
   id, lot_no, product_code, qty, priority, customer_lot,
   route_id, route_version_id, current_sort_no, current_step_id, current_eqp_id,
@@ -491,3 +515,17 @@ INSERT INTO mes_tx_log (
  5001, NULL, 5101, '演示放行进首站',
  1, 'admin', NOW())
 ON DUPLICATE KEY UPDATE remark = VALUES(remark);
+
+INSERT INTO mes_wip_lot (
+  lot_id, lot_no, product_code, qty, priority, customer_lot,
+  status, current_sort_no, current_step_id, current_eqp_id,
+  route_id, route_version_id, update_time
+) VALUES
+(6002, 'LOT-N7-DEMO-02', 'N7', 25, 80, 'CUST-001',
+ 'wait', 10, 5001, NULL,
+ 5100, 5101, NOW())
+ON DUPLICATE KEY UPDATE
+  status = VALUES(status),
+  current_sort_no = VALUES(current_sort_no),
+  current_step_id = VALUES(current_step_id),
+  update_time = VALUES(update_time);

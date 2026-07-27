@@ -23,6 +23,7 @@ import com.mes.track.vo.MesTxLogVO;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackReleaseResultVO;
 import com.mes.track.vo.TrackTxnResultVO;
+import com.mes.wip.service.WipProjectionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,6 +61,7 @@ public class TrackServiceImpl implements TrackService {
     private final MesStepMapper mesStepMapper;
     private final MesTxLogMapper mesTxLogMapper;
     private final SysUserMapper sysUserMapper;
+    private final WipProjectionService wipProjectionService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -96,6 +98,7 @@ public class TrackServiceImpl implements TrackService {
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_RELEASE, fromStatus, STATUS_WAIT, fromSortNo, firstStep.getSortNo(),
                 firstStep.getStepId(), null, active.getId(), "放行进首站");
@@ -131,6 +134,7 @@ public class TrackServiceImpl implements TrackService {
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
                 current.getStepId(), eqpId, lot.getRouteVersionId(), "开工");
@@ -186,6 +190,7 @@ public class TrackServiceImpl implements TrackService {
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_TRACK_OUT, fromStatus, toStatus, fromSortNo, toSortNo,
                 toStepId, fromEqpId, lot.getRouteVersionId(), remark);

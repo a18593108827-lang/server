@@ -24,6 +24,7 @@ import com.mes.route.mapper.MesRouteStepMapper;
 import com.mes.route.mapper.MesRouteVersionMapper;
 import com.mes.route.mapper.MesStepMapper;
 import com.mes.track.service.TrackService;
+import com.mes.wip.service.WipProjectionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -65,6 +66,7 @@ public class MesLotServiceImpl implements MesLotService {
     private final MesRouteStepMapper mesRouteStepMapper;
     private final MesStepMapper mesStepMapper;
     private final TrackService trackService;
+    private final WipProjectionService wipProjectionService;
 
     @Override
     public PageResult<MesLotVO> page(MesLotQuery query) {
@@ -187,6 +189,7 @@ public class MesLotServiceImpl implements MesLotService {
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
     }
 
     @Override
