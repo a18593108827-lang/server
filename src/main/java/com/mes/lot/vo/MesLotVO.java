@@ -22,7 +22,13 @@ public class MesLotVO {
     private Long routeVersionId;
     /** 放行快照版本号 */
     private Integer routeVersionNo;
-    /** created / released / completed / scrapped */
+    /** 当前站顺序号 */
+    private Integer currentSortNo;
+    /** 当前工序 ID */
+    private Long currentStepId;
+    /** 当前设备 ID */
+    private Long currentEqpId;
+    /** created / wait / processing / held / completed / scrapped */
     private String status;
     private String remark;
     /** 乐观锁版本号 */

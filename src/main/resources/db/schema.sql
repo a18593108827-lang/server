@@ -180,6 +180,8 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (290, 200, 2, 'track:view',      '现场台',   '/track',          'lock',             19, 1, NOW(), NOW(), 0),
 (291, 290, 3, 'track:track-in',  'Track In', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (292, 290, 3, 'track:track-out', 'Track Out',NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(293, 290, 3, 'track:release',   '放行',     NULL,              NULL,               3,  1, NOW(), NOW(), 0),
+(294, 290, 3, 'track:move',      '移站',     NULL,              NULL,               4,  1, NOW(), NOW(), 0),
 -- 系统管理
 (100, 0,   1, 'system',              '系统管理', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
 (110, 100, 2, 'system:user',         '用户管理', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
@@ -256,7 +258,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1110, 1, 280, NOW()),
 (1111, 1, 290, NOW()),
 (1112, 1, 291, NOW()),
-(1113, 1, 292, NOW())
+(1113, 1, 292, NOW()),
+(1119, 1, 293, NOW()),
+(1120, 1, 294, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor：生产部分 + 申请审批
@@ -284,7 +288,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1202, 2, 230, NOW()),
 (1203, 2, 290, NOW()),
 (1204, 2, 291, NOW()),
-(1205, 2, 292, NOW())
+(1205, 2, 292, NOW()),
+(1206, 2, 293, NOW()),
+(1207, 2, 294, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- process_eng：申请 + 工艺相关
@@ -302,6 +308,7 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
+(1314, 3, 293, NOW()),
 (1306, 3, 260, NOW()),
 (1307, 3, 270, NOW()),
 (1308, 3, 280, NOW())
@@ -409,7 +416,10 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     customer_lot      VARCHAR(64)            COMMENT '客户Lot',
     route_id          BIGINT                 COMMENT '路线ID',
     route_version_id  BIGINT                 COMMENT '放行快照版本ID，Release后锁定',
-    status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT 'created/released/completed/scrapped',
+    current_sort_no   INT                    COMMENT '当前站顺序号（快照内）',
+    current_step_id   BIGINT                 COMMENT '当前工序ID',
+    current_eqp_id    BIGINT                 COMMENT '当前设备ID（TrackIn后）',
+    status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT '状态: created已创建/released已放行/wait等待加工/processing加工中/held锁批/completed已完工/scrapped已报废',
     remark            VARCHAR(512)           COMMENT '备注',
     version           INT           NOT NULL DEFAULT 0 COMMENT '乐观锁',
     create_by         BIGINT                 COMMENT '创建人',
@@ -422,7 +432,8 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     KEY idx_lot_status (status),
     KEY idx_lot_product (product_code),
     KEY idx_lot_route (route_id),
-    KEY idx_lot_route_ver (route_version_id)
+    KEY idx_lot_route_ver (route_version_id),
+    KEY idx_lot_current_step (current_step_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次';
 
 CREATE TABLE IF NOT EXISTS mes_lot_no_seq (
@@ -431,16 +442,52 @@ CREATE TABLE IF NOT EXISTS mes_lot_no_seq (
     PRIMARY KEY (seq_day)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次号按日流水';
 
+CREATE TABLE IF NOT EXISTS mes_tx_log (
+    id                BIGINT        NOT NULL COMMENT '主键',
+    lot_id            BIGINT        NOT NULL COMMENT '批次ID',
+    lot_no            VARCHAR(64)            COMMENT '批次号冗余',
+    tx_type           VARCHAR(32)   NOT NULL COMMENT '事务类型: RELEASE放行/MOVE移站/TRACK_IN开工/TRACK_OUT完工/HOLD锁批/RELEASE_HOLD解锁/SKIP跳站/REWORK返工',
+    from_status       VARCHAR(32)            COMMENT '变更前状态(同mes_lot.status枚举)',
+    to_status         VARCHAR(32)            COMMENT '变更后状态(同mes_lot.status枚举)',
+    from_sort_no      INT                    COMMENT '变更前站序',
+    to_sort_no        INT                    COMMENT '变更后站序',
+    step_id           BIGINT                 COMMENT '相关工序',
+    eqp_id            BIGINT                 COMMENT '相关设备',
+    route_version_id  BIGINT                 COMMENT '路线版本快照',
+    remark            VARCHAR(512)           COMMENT '备注',
+    oper_user_id      BIGINT                 COMMENT '操作人',
+    oper_user_name    VARCHAR(64)            COMMENT '操作人名称冗余',
+    create_time       DATETIME      NOT NULL COMMENT '事务时间',
+    PRIMARY KEY (id),
+    KEY idx_tx_lot_time (lot_id, create_time),
+    KEY idx_tx_type_time (tx_type, create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Track事务履历（只追加）';
+
 INSERT INTO mes_lot (
   id, lot_no, product_code, qty, priority, customer_lot,
-  route_id, route_version_id, status, remark, version,
+  route_id, route_version_id, current_sort_no, current_step_id, current_eqp_id,
+  status, remark, version,
   create_by, create_time, update_by, update_time, deleted
 ) VALUES
-(6001, 'LOT-N7-DEMO-01', 'N7', 25, 50, NULL, 5100, NULL, 'created', '未放行演示', 0, 1, NOW(), 1, NOW(), 0),
-(6002, 'LOT-N7-DEMO-02', 'N7', 25, 80, 'CUST-001', 5100, 5101, 'released', '已放行演示（绑 active v1）', 0, 1, NOW(), 1, NOW(), 0)
+(6001, 'LOT-N7-DEMO-01', 'N7', 25, 50, NULL, 5100, NULL, NULL, NULL, NULL, 'created', '未放行演示', 0, 1, NOW(), 1, NOW(), 0),
+(6002, 'LOT-N7-DEMO-02', 'N7', 25, 80, 'CUST-001', 5100, 5101, 10, 5001, NULL, 'wait', '已放行演示（首站 wait）', 0, 1, NOW(), 1, NOW(), 0)
 ON DUPLICATE KEY UPDATE
   product_code = VALUES(product_code),
   qty = VALUES(qty),
   status = VALUES(status),
   route_version_id = VALUES(route_version_id),
+  current_sort_no = VALUES(current_sort_no),
+  current_step_id = VALUES(current_step_id),
   update_time = NOW();
+
+INSERT INTO mes_tx_log (
+  id, lot_id, lot_no, tx_type,
+  from_status, to_status, from_sort_no, to_sort_no,
+  step_id, eqp_id, route_version_id, remark,
+  oper_user_id, oper_user_name, create_time
+) VALUES
+(7001, 6002, 'LOT-N7-DEMO-02', 'RELEASE',
+ 'created', 'wait', NULL, 10,
+ 5001, NULL, 5101, '演示放行进首站',
+ 1, 'admin', NOW())
+ON DUPLICATE KEY UPDATE remark = VALUES(remark);

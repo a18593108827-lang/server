@@ -9,7 +9,7 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 
 /**
- * 批次实体：生命周期入口；放行后绑定 Route 版本快照
+ * 批次实体：主数据 + 快照指针 + Track 写入的运行态
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -41,7 +41,19 @@ public class MesLot extends BaseEntity {
     /** 放行快照版本 ID；Release 后锁定，Track 只认此字段 */
     private Long routeVersionId;
 
-    /** 状态：created 已创建 / released 已放行 / completed 已完工 / scrapped 已报废 */
+    /** 当前站顺序号（快照内）；未进站可空 */
+    private Integer currentSortNo;
+
+    /** 当前工序 ID */
+    private Long currentStepId;
+
+    /** 当前设备 ID（TrackIn 后；一期可空） */
+    private Long currentEqpId;
+
+    /**
+     * 状态：created 已创建 / released 已放行(过渡) / wait 等待加工 /
+     * processing 加工中 / held 锁批 / completed 已完工 / scrapped 已报废
+     */
     private String status;
 
     /** 备注 */

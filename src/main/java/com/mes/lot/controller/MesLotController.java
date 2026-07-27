@@ -1,6 +1,7 @@
 package com.mes.lot.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaMode;
 import com.mes.common.PageResult;
 import com.mes.common.R;
 import com.mes.common.annotation.OperLog;
@@ -10,6 +11,8 @@ import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.service.MesLotService;
 import com.mes.lot.vo.MesLotCreateResultVO;
 import com.mes.lot.vo.MesLotVO;
+import com.mes.track.service.TrackService;
+import com.mes.track.vo.MesTxLogVO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -20,6 +23,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
  * 批次接口：创建 / 改属性 / 放行绑 Route 版本快照
  */
@@ -29,6 +34,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class MesLotController {
 
     private final MesLotService mesLotService;
+    private final TrackService trackService;
 
     /** 分页列表 */
     @SaCheckPermission("lot:list")
@@ -52,6 +58,13 @@ public class MesLotController {
         return R.ok(mesLotService.get(id));
     }
 
+    /** 事务履历 */
+    @SaCheckPermission(value = {"history:list", "track:view"}, mode = SaMode.OR)
+    @GetMapping("/{id}/history")
+    public R<List<MesTxLogVO>> history(@PathVariable Long id) {
+        return R.ok(trackService.history(id));
+    }
+
     /** 改属性 */
     @SaCheckPermission("lot:edit")
     @OperLog(module = "Lot", action = "改批次属性")
@@ -61,7 +74,7 @@ public class MesLotController {
         return R.ok();
     }
 
-    /** 放行：写死当时 active 版本 */
+    /** 放行（兼容入口，逻辑委托 Track） */
     @SaCheckPermission("lot:release")
     @OperLog(module = "Lot", action = "批次放行")
     @PostMapping("/{id}/release")

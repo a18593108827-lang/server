@@ -23,6 +23,7 @@ import com.mes.route.mapper.MesRouteMapper;
 import com.mes.route.mapper.MesRouteStepMapper;
 import com.mes.route.mapper.MesRouteVersionMapper;
 import com.mes.route.mapper.MesStepMapper;
+import com.mes.track.service.TrackService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,8 +48,10 @@ public class MesLotServiceImpl implements MesLotService {
 
     /** 已创建（未放行） */
     public static final String STATUS_CREATED = "created";
-    /** 已放行 */
+    /** 已放行（过渡态，Track 放行后为 wait） */
     public static final String STATUS_RELEASED = "released";
+    public static final String STATUS_WAIT = "wait";
+    public static final String STATUS_PROCESSING = "processing";
     /** Route 生效版本状态 */
     public static final String ROUTE_ACTIVE = "active";
     /** 厂内批次号前缀 */
@@ -61,6 +64,7 @@ public class MesLotServiceImpl implements MesLotService {
     private final MesRouteVersionMapper mesRouteVersionMapper;
     private final MesRouteStepMapper mesRouteStepMapper;
     private final MesStepMapper mesStepMapper;
+    private final TrackService trackService;
 
     @Override
     public PageResult<MesLotVO> page(MesLotQuery query) {
@@ -162,8 +166,7 @@ public class MesLotServiceImpl implements MesLotService {
     public void update(Long id, MesLotUpdateDTO dto) {
         MesLot lot = mesLotMapper.selectById(id);
         AssertUtil.notNull(lot, "批次不存在");
-        AssertUtil.isTrue(STATUS_CREATED.equals(lot.getStatus()) || STATUS_RELEASED.equals(lot.getStatus()),
-                "当前状态不可编辑");
+        AssertUtil.isTrue(isEditableStatus(lot.getStatus()), "当前状态不可编辑");
 
         if (STATUS_CREATED.equals(lot.getStatus())) {
             if (dto.getRouteId() != null) {
@@ -171,7 +174,7 @@ public class MesLotServiceImpl implements MesLotService {
             }
             lot.setRouteId(dto.getRouteId());
         } else {
-            // released：禁止改路线（route_version_id 始终不可通过本接口改）
+            // 已放行/在途：禁止改路线（route_version_id 始终不可通过本接口改）
             AssertUtil.isFalse(dto.getRouteId() != null && !Objects.equals(dto.getRouteId(), lot.getRouteId()),
                     "已放行不可修改路线");
         }
@@ -189,28 +192,15 @@ public class MesLotServiceImpl implements MesLotService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void release(Long id) {
-        MesLot lot = mesLotMapper.selectById(id);
-        AssertUtil.notNull(lot, "批次不存在");
-        AssertUtil.isTrue(STATUS_CREATED.equals(lot.getStatus()), "仅未放行批次可放行");
-        AssertUtil.notNull(lot.getRouteId(), "请先指定工艺路线");
+        // 兼容入口：逻辑收敛到 Track
+        trackService.release(id);
+    }
 
-        MesRoute route = assertRouteUsable(lot.getRouteId());
-        // 只认当时 active；之后 Route 升版不影响本 Lot
-        MesRouteVersion active = mesRouteVersionMapper.selectOne(new LambdaQueryWrapper<MesRouteVersion>()
-                .eq(MesRouteVersion::getRouteId, route.getId())
-                .eq(MesRouteVersion::getStatus, ROUTE_ACTIVE)
-                .last("LIMIT 1"));
-        AssertUtil.notNull(active, "路线无生效版本，无法放行");
-
-        Long stepCount = mesRouteStepMapper.selectCount(new LambdaQueryWrapper<MesRouteStep>()
-                .eq(MesRouteStep::getVersionId, active.getId()));
-        AssertUtil.isTrue(stepCount != null && stepCount > 0, "生效版本无步骤，无法放行");
-
-        lot.setRouteVersionId(active.getId());
-        lot.setStatus(STATUS_RELEASED);
-        lot.setUpdateBy(StpUtil.getLoginIdAsLong());
-        int rows = mesLotMapper.updateById(lot);
-        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+    private static boolean isEditableStatus(String status) {
+        return STATUS_CREATED.equals(status)
+                || STATUS_RELEASED.equals(status)
+                || STATUS_WAIT.equals(status)
+                || STATUS_PROCESSING.equals(status);
     }
 
     /** 路线存在且未停用 */
@@ -274,6 +264,9 @@ public class MesLotServiceImpl implements MesLotService {
         vo.setCustomerLot(lot.getCustomerLot());
         vo.setRouteId(lot.getRouteId());
         vo.setRouteVersionId(lot.getRouteVersionId());
+        vo.setCurrentSortNo(lot.getCurrentSortNo());
+        vo.setCurrentStepId(lot.getCurrentStepId());
+        vo.setCurrentEqpId(lot.getCurrentEqpId());
         vo.setStatus(lot.getStatus());
         vo.setRemark(lot.getRemark());
         vo.setVersion(lot.getVersion());
