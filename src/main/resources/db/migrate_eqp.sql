@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS mes_eqp (
     status        VARCHAR(16)  NOT NULL DEFAULT 'idle' COMMENT '业务态: idle/running/down/pm/eng/offline',
     enabled       TINYINT      NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
     remark        VARCHAR(256)          COMMENT '备注',
+    version       INT          NOT NULL DEFAULT 0 COMMENT '乐观锁',
     create_by     BIGINT                COMMENT '创建人',
     update_by     BIGINT                COMMENT '更新人',
     create_time   DATETIME              COMMENT '创建时间',
@@ -33,14 +34,27 @@ CREATE TABLE IF NOT EXISTS mes_eqp (
     KEY idx_eqp_type (eqp_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='设备主数据（最小集）';
 
+-- 已有表补乐观锁列
+SET @db := DATABASE();
+SET @exists := (
+  SELECT COUNT(1) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'mes_eqp' AND COLUMN_NAME = 'version'
+);
+SET @sql := IF(@exists = 0,
+  'ALTER TABLE mes_eqp ADD COLUMN version INT NOT NULL DEFAULT 0 COMMENT ''乐观锁'' AFTER remark',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 INSERT INTO mes_eqp (
-  id, eqp_code, eqp_name, eqp_type, area, status, enabled, remark,
+  id, eqp_code, eqp_name, eqp_type, area, status, enabled, remark, version,
   create_time, update_time, deleted
 ) VALUES
-(9001, 'EQP-ETCH-A1',  '刻蚀机 A1', 'ETCH',  '刻蚀', 'idle', 1, NULL, NOW(), NOW(), 0),
-(9002, 'EQP-ETCH-A2',  '刻蚀机 A2', 'ETCH',  '刻蚀', 'idle', 1, NULL, NOW(), NOW(), 0),
-(9003, 'EQP-CMP-B2',   '抛光机 B2', 'CMP',   'CMP',  'idle', 1, NULL, NOW(), NOW(), 0),
-(9004, 'EQP-PHOTO-E1', '光刻机 E1', 'PHOTO', '光刻', 'pm',   1, '保养中', NOW(), NOW(), 0)
+(9001, 'EQP-ETCH-A1',  '刻蚀机 A1', 'ETCH',  '刻蚀', 'idle', 1, NULL, 0, NOW(), NOW(), 0),
+(9002, 'EQP-ETCH-A2',  '刻蚀机 A2', 'ETCH',  '刻蚀', 'idle', 1, NULL, 0, NOW(), NOW(), 0),
+(9003, 'EQP-CMP-B2',   '抛光机 B2', 'CMP',   'CMP',  'idle', 1, NULL, 0, NOW(), NOW(), 0),
+(9004, 'EQP-PHOTO-E1', '光刻机 E1', 'PHOTO', '光刻', 'pm',   1, '保养中', 0, NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE
   eqp_name = VALUES(eqp_name),
   eqp_type = VALUES(eqp_type),

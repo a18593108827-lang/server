@@ -3,6 +3,7 @@ package com.mes.track.service.impl;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.common.AssertUtil;
+import com.mes.equipment.service.MesEqpService;
 import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
@@ -64,6 +65,7 @@ public class TrackServiceImpl implements TrackService {
     private final SysUserMapper sysUserMapper;
     private final WipProjectionService wipProjectionService;
     private final HoldService holdService;
+    private final MesEqpService mesEqpService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -124,6 +126,7 @@ public class TrackServiceImpl implements TrackService {
     public TrackTxnResultVO trackIn(Long lotId, Long eqpId) {
         MesLot lot = requireExecutableLot(lotId);
         holdService.assertNoActive(lotId);
+        mesEqpService.assertUsable(eqpId);
         AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅等待加工状态可开工");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法开工");
         AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
