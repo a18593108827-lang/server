@@ -169,6 +169,9 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (223, 220, 3, 'lot:release',     '批次放行', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (230, 200, 2, 'wip:list',        '在制',     '/app/wip',        'boxes',            13, 1, NOW(), NOW(), 0),
 (240, 200, 2, 'eqp:list',        '设备',     '/app/equipment',  'factory',          14, 1, NOW(), NOW(), 0),
+(241, 240, 3, 'eqp:add',         '设备新增', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(242, 240, 3, 'eqp:edit',        '设备编辑', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(243, 240, 3, 'eqp:status',      '设备改态', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (250, 200, 2, 'route:list',      '路线',     '/app/route',      'map',              15, 1, NOW(), NOW(), 0),
 (251, 250, 3, 'route:add',       '路线新增', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (252, 250, 3, 'route:edit',      '路线编辑', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
@@ -248,6 +251,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1118, 1, 223, NOW()),
 (1103, 1, 230, NOW()),
 (1104, 1, 240, NOW()),
+(1121, 1, 241, NOW()),
+(1122, 1, 242, NOW()),
+(1123, 1, 243, NOW()),
 (1105, 1, 250, NOW()),
 (1114, 1, 251, NOW()),
 (1115, 1, 252, NOW()),
@@ -276,7 +282,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1404, 4, 261, NOW()),
 (1405, 4, 262, NOW()),
 (1406, 4, 270, NOW()),
-(1407, 4, 100, NOW())
+(1407, 4, 100, NOW()),
+(1408, 4, 240, NOW()),
+(1409, 4, 243, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator：申请 + 现场
@@ -305,6 +313,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1313, 3, 223, NOW()),
 (1303, 3, 230, NOW()),
 (1304, 3, 240, NOW()),
+(1315, 3, 241, NOW()),
+(1316, 3, 242, NOW()),
+(1317, 3, 243, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -587,4 +598,45 @@ CREATE TABLE IF NOT EXISTS mes_hold (
     KEY idx_hold_lot_status (lot_id, status),
     KEY idx_hold_status_time (status, hold_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='锁批记录（最小集；一期同Lot最多一条active）';
+
+-- =========================
+-- Equipment 模块（详见 migrate_eqp.sql）
+-- mes_eqp.status: idle/running/down/pm/eng/offline
+-- =========================
+CREATE TABLE IF NOT EXISTS mes_eqp (
+    id            BIGINT       NOT NULL COMMENT '主键',
+    eqp_code      VARCHAR(64)  NOT NULL COMMENT '设备编码（唯一）',
+    eqp_name      VARCHAR(128) NOT NULL COMMENT '设备名称',
+    eqp_type      VARCHAR(64)           COMMENT '设备类型（对齐 mes_step.eqp_type）',
+    area          VARCHAR(64)           COMMENT '区域/Bay',
+    status        VARCHAR(16)  NOT NULL DEFAULT 'idle' COMMENT '业务态: idle/running/down/pm/eng/offline',
+    enabled       TINYINT      NOT NULL DEFAULT 1 COMMENT '1启用 0停用',
+    remark        VARCHAR(256)          COMMENT '备注',
+    create_by     BIGINT                COMMENT '创建人',
+    update_by     BIGINT                COMMENT '更新人',
+    create_time   DATETIME              COMMENT '创建时间',
+    update_time   DATETIME              COMMENT '更新时间',
+    deleted       TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0否 1是',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_eqp_code (eqp_code),
+    KEY idx_eqp_status (status, enabled),
+    KEY idx_eqp_type (eqp_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='设备主数据（最小集）';
+
+INSERT INTO mes_eqp (
+  id, eqp_code, eqp_name, eqp_type, area, status, enabled, remark,
+  create_time, update_time, deleted
+) VALUES
+(9001, 'EQP-ETCH-A1',  '刻蚀机 A1', 'ETCH',  '刻蚀', 'idle', 1, NULL, NOW(), NOW(), 0),
+(9002, 'EQP-ETCH-A2',  '刻蚀机 A2', 'ETCH',  '刻蚀', 'idle', 1, NULL, NOW(), NOW(), 0),
+(9003, 'EQP-CMP-B2',   '抛光机 B2', 'CMP',   'CMP',  'idle', 1, NULL, NOW(), NOW(), 0),
+(9004, 'EQP-PHOTO-E1', '光刻机 E1', 'PHOTO', '光刻', 'pm',   1, '保养中', NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE
+  eqp_name = VALUES(eqp_name),
+  eqp_type = VALUES(eqp_type),
+  area = VALUES(area),
+  status = VALUES(status),
+  enabled = VALUES(enabled),
+  remark = VALUES(remark),
+  update_time = NOW();
 
