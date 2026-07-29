@@ -664,6 +664,7 @@ CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     reserve_user_id  BIGINT                COMMENT '???',
     consume_tx_id    BIGINT                COMMENT '????? mes_tx_log.id????',
     remark           VARCHAR(256)          COMMENT '??',
+    version          INT          NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
     create_time      DATETIME              COMMENT '????',
     update_time      DATETIME              COMMENT '????',
     deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '????: 0? 1?',

@@ -3,6 +3,7 @@ package com.mes.dispatch.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.Version;
 import com.mes.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -32,4 +33,7 @@ public class MesDispatchReserve extends BaseEntity {
     private Long reserveUserId;
     private Long consumeTxId;
     private String remark;
+
+    @Version
+    private Integer version;
 }

@@ -157,9 +157,9 @@ public class DispatchServiceImpl implements DispatchService {
             AssertUtil.isTrue(eqpType.equals(eqp.getEqpType()), "设备类型与当前站不匹配");
         }
 
-        // 检查预约是否过期
-        MesDispatchReserve mine = activeOrNull(findActiveByLot(lot.getId()));
-        MesDispatchReserve otherOnEqp = activeOrNull(findActiveByEqp(eqp.getId()));
+        // 检查预约是否过期（写路径加行锁）
+        MesDispatchReserve mine = activeOrNull(findActiveByLot(lot.getId(), true));
+        MesDispatchReserve otherOnEqp = activeOrNull(findActiveByEqp(eqp.getId(), true));
         // 如果设备被其他批次预约，则不允许预约
         AssertUtil.isTrue(otherOnEqp == null || Objects.equals(otherOnEqp.getLotId(), lot.getId()),
                 "设备已被其他批次预约：" + eqp.getEqpCode());
@@ -197,7 +197,9 @@ public class DispatchServiceImpl implements DispatchService {
     @Transactional(rollbackFor = Exception.class)
     public DispatchReserveVO release(Long id, String remark) {
         AssertUtil.notNull(id, "预约ID不能为空");
-        MesDispatchReserve row = mesDispatchReserveMapper.selectById(id);
+        MesDispatchReserve row = mesDispatchReserveMapper.selectOne(new LambdaQueryWrapper<MesDispatchReserve>()
+                .eq(MesDispatchReserve::getId, id)
+                .last("FOR UPDATE"));
         AssertUtil.notNull(row, "预约不存在");
         expireIfNeeded(row);
         AssertUtil.isTrue(RESERVE_ACTIVE.equals(row.getStatus()), "仅生效中的预约可释约");
@@ -217,11 +219,11 @@ public class DispatchServiceImpl implements DispatchService {
 
         LambdaQueryWrapper<MesDispatchReserve> qw = new LambdaQueryWrapper<>();
         if (lotId != null) {
-            expireIfNeeded(findActiveByLot(lotId));
+            expireIfNeeded(findActiveByLot(lotId, false));
             qw.eq(MesDispatchReserve::getLotId, lotId);
         }
         if (eqpId != null) {
-            expireIfNeeded(findActiveByEqp(eqpId));
+            expireIfNeeded(findActiveByEqp(eqpId, false));
             qw.eq(MesDispatchReserve::getEqpId, eqpId);
         }
         String st = StringUtils.hasText(status) ? status.trim() : RESERVE_ACTIVE;
@@ -239,11 +241,12 @@ public class DispatchServiceImpl implements DispatchService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
     public void assertReserveMatch(Long lotId, Long eqpId) {
         if (lotId == null) {
             return;
         }
-        MesDispatchReserve active = activeOrNull(findActiveByLot(lotId));
+        MesDispatchReserve active = activeOrNull(findActiveByLot(lotId, true));
         if (active == null) {
             return;
         }
@@ -257,7 +260,7 @@ public class DispatchServiceImpl implements DispatchService {
         if (lotId == null) {
             return;
         }
-        MesDispatchReserve active = activeOrNull(findActiveByLot(lotId));
+        MesDispatchReserve active = activeOrNull(findActiveByLot(lotId, true));
         if (active == null) {
             return;
         }
@@ -278,28 +281,30 @@ public class DispatchServiceImpl implements DispatchService {
         return null;
     }
 
-    // 获取当前批次的 active 预约
-    private MesDispatchReserve findActiveByLot(Long lotId) {
+    // 获取当前批次的 active 预约；forUpdate=true 时行锁（须在事务内）
+    private MesDispatchReserve findActiveByLot(Long lotId, boolean forUpdate) {
         if (lotId == null) {
             return null;
         }
-        return mesDispatchReserveMapper.selectOne(new LambdaQueryWrapper<MesDispatchReserve>()
+        LambdaQueryWrapper<MesDispatchReserve> qw = new LambdaQueryWrapper<MesDispatchReserve>()
                 .eq(MesDispatchReserve::getLotId, lotId)
                 .eq(MesDispatchReserve::getStatus, RESERVE_ACTIVE)
                 .orderByDesc(MesDispatchReserve::getCreateTime)
-                .last("LIMIT 1"));
+                .last(forUpdate ? "LIMIT 1 FOR UPDATE" : "LIMIT 1");
+        return mesDispatchReserveMapper.selectOne(qw);
     }
 
-    // 获取当前设备当前的 active 预约
-    private MesDispatchReserve findActiveByEqp(Long eqpId) {
+    // 获取当前设备的 active 预约；forUpdate=true 时行锁（须在事务内）
+    private MesDispatchReserve findActiveByEqp(Long eqpId, boolean forUpdate) {
         if (eqpId == null) {
             return null;
         }
-        return mesDispatchReserveMapper.selectOne(new LambdaQueryWrapper<MesDispatchReserve>()
+        LambdaQueryWrapper<MesDispatchReserve> qw = new LambdaQueryWrapper<MesDispatchReserve>()
                 .eq(MesDispatchReserve::getEqpId, eqpId)
                 .eq(MesDispatchReserve::getStatus, RESERVE_ACTIVE)
                 .orderByDesc(MesDispatchReserve::getCreateTime)
-                .last("LIMIT 1"));
+                .last(forUpdate ? "LIMIT 1 FOR UPDATE" : "LIMIT 1");
+        return mesDispatchReserveMapper.selectOne(qw);
     }
 
 
@@ -323,16 +328,19 @@ public class DispatchServiceImpl implements DispatchService {
     }
 
     /**
-     * active → 终态：清 eqp_slot/lot_slot，腾出唯一坑。
-     * 必须用 UpdateWrapper，updateById 默认不写 null。
+     * active → 终态：清 eqp_slot/lot_slot，腾出唯一坑；带 version 条件。
+     * 必须用 UpdateWrapper，updateById 默认不写 null；Wrapper 路径需手写 version。
      */
     private void leaveActive(MesDispatchReserve row, String toStatus, String remark, Long consumeTxId) {
+        int ver = row.getVersion() == null ? 0 : row.getVersion();
         LambdaUpdateWrapper<MesDispatchReserve> uw = new LambdaUpdateWrapper<>();
         uw.eq(MesDispatchReserve::getId, row.getId())
                 .eq(MesDispatchReserve::getStatus, RESERVE_ACTIVE)
+                .eq(MesDispatchReserve::getVersion, ver)
                 .set(MesDispatchReserve::getStatus, toStatus)
                 .set(MesDispatchReserve::getEqpSlot, null)
-                .set(MesDispatchReserve::getLotSlot, null);
+                .set(MesDispatchReserve::getLotSlot, null)
+                .set(MesDispatchReserve::getVersion, ver + 1);
         if (remark != null) {
             uw.set(MesDispatchReserve::getRemark, remark);
         }
@@ -344,6 +352,7 @@ public class DispatchServiceImpl implements DispatchService {
             row.setStatus(toStatus);
             row.setEqpSlot(null);
             row.setLotSlot(null);
+            row.setVersion(ver + 1);
             if (remark != null) {
                 row.setRemark(remark);
             }
@@ -358,6 +367,7 @@ public class DispatchServiceImpl implements DispatchService {
                 row.setLotSlot(fresh.getLotSlot());
                 row.setRemark(fresh.getRemark());
                 row.setConsumeTxId(fresh.getConsumeTxId());
+                row.setVersion(fresh.getVersion());
             }
         }
     }

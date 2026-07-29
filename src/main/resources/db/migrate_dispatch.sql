@@ -11,8 +11,8 @@
 --   expired   = 已超时（超过 expire_time）
 --   consumed  = 已消费（TrackIn 成功后终态）
 -- deleted：0正常 1逻辑删
--- 并发约束：eqp_slot/lot_slot 在 active 时分别=eqp_id/lot_id，UNIQUE 保证同机/同批同时仅一条 active
--- 已建库补列见 migrate_dispatch_reserve_slot.sql
+-- 并发约束：eqp_slot/lot_slot + version 乐观锁
+-- 已建库补列见 migrate_dispatch_reserve_slot.sql / migrate_dispatch_reserve_version.sql
 -- =========================
 CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     id               BIGINT       NOT NULL COMMENT '主键',
@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     reserve_user_id  BIGINT                COMMENT '预约人',
     consume_tx_id    BIGINT                COMMENT '消费时关联 mes_tx_log.id（可选）',
     remark           VARCHAR(256)          COMMENT '备注',
+    version          INT          NOT NULL DEFAULT 0 COMMENT '乐观锁版本',
     create_time      DATETIME              COMMENT '创建时间',
     update_time      DATETIME              COMMENT '更新时间',
     deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0否 1是',
