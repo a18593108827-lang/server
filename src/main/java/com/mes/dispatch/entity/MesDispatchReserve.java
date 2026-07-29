@@ -19,7 +19,11 @@ public class MesDispatchReserve extends BaseEntity {
     private Long id;
 
     private Long lotId;
+    /** active 时=lotId，否则 null；UNIQUE 防同批双约 */
+    private Long lotSlot;
     private Long eqpId;
+    /** active 时=eqpId，否则 null；UNIQUE 防同机双约 */
+    private Long eqpSlot;
 
     /** active / released / expired / consumed */
     private String status;

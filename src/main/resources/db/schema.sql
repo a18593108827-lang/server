@@ -656,7 +656,9 @@ ON DUPLICATE KEY UPDATE
 CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     id               BIGINT       NOT NULL COMMENT '??',
     lot_id           BIGINT       NOT NULL COMMENT '??ID',
+    lot_slot         BIGINT                COMMENT 'active?=lot_id, else NULL',
     eqp_id           BIGINT       NOT NULL COMMENT '??ID',
+    eqp_slot         BIGINT                COMMENT 'active?=eqp_id, else NULL',
     status           VARCHAR(16)  NOT NULL COMMENT '???: active???/released???/expired???/consumed???',
     expire_time      DATETIME     NOT NULL COMMENT '????',
     reserve_user_id  BIGINT                COMMENT '???',
@@ -666,6 +668,8 @@ CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     update_time      DATETIME              COMMENT '????',
     deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '????: 0? 1?',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_reserve_eqp_slot (eqp_slot),
+    UNIQUE KEY uk_reserve_lot_slot (lot_slot),
     KEY idx_reserve_lot_status (lot_id, status),
     KEY idx_reserve_eqp_status (eqp_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='?????????????????';

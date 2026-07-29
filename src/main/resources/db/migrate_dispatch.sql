@@ -11,12 +11,15 @@
 --   expired   = 已超时（超过 expire_time）
 --   consumed  = 已消费（TrackIn 成功后终态）
 -- deleted：0正常 1逻辑删
--- 应用层约束：同一 eqp_id 同时最多一条 active
+-- 并发约束：eqp_slot/lot_slot 在 active 时分别=eqp_id/lot_id，UNIQUE 保证同机/同批同时仅一条 active
+-- 已建库补列见 migrate_dispatch_reserve_slot.sql
 -- =========================
 CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     id               BIGINT       NOT NULL COMMENT '主键',
     lot_id           BIGINT       NOT NULL COMMENT '批次ID',
+    lot_slot         BIGINT                COMMENT 'active 时=lot_id，否则 NULL',
     eqp_id           BIGINT       NOT NULL COMMENT '设备ID',
+    eqp_slot         BIGINT                COMMENT 'active 时=eqp_id，否则 NULL',
     status           VARCHAR(16)  NOT NULL COMMENT '预约态: active生效中/released已释约/expired已超时/consumed已消费',
     expire_time      DATETIME     NOT NULL COMMENT '超时时刻',
     reserve_user_id  BIGINT                COMMENT '预约人',
@@ -26,6 +29,8 @@ CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     update_time      DATETIME              COMMENT '更新时间',
     deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0否 1是',
     PRIMARY KEY (id),
+    UNIQUE KEY uk_reserve_eqp_slot (eqp_slot),
+    UNIQUE KEY uk_reserve_lot_slot (lot_slot),
     KEY idx_reserve_lot_status (lot_id, status),
     KEY idx_reserve_eqp_status (eqp_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='派工设备预约（可选；候选推荐无表）';
