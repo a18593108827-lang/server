@@ -27,3 +27,9 @@ sa-token:
   is-share: true
   token-style: uuid
   is-log: false
+
+# MES 业务配置
+mes:
+  dispatch:
+    # 设备预约超时（分钟），默认 30
+    reserve-ttl-minutes: 30

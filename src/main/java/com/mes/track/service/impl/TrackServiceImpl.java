@@ -3,6 +3,7 @@ package com.mes.track.service.impl;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.common.AssertUtil;
+import com.mes.dispatch.service.DispatchService;
 import com.mes.equipment.service.MesEqpService;
 import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
@@ -66,6 +67,7 @@ public class TrackServiceImpl implements TrackService {
     private final WipProjectionService wipProjectionService;
     private final HoldService holdService;
     private final MesEqpService mesEqpService;
+    private final DispatchService dispatchService;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -127,6 +129,7 @@ public class TrackServiceImpl implements TrackService {
         MesLot lot = requireExecutableLot(lotId);
         holdService.assertNoActive(lotId);
         mesEqpService.assertUsable(eqpId);
+        dispatchService.assertReserveMatch(lotId, eqpId);// 预约匹配
         AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅等待加工状态可开工");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法开工");
         AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
@@ -142,8 +145,9 @@ public class TrackServiceImpl implements TrackService {
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
         wipProjectionService.syncFromLot(lot);
 
-        writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
+        Long txId = writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
                 current.getStepId(), eqpId, lot.getRouteVersionId(), "开工");
+        dispatchService.consumeOnTrackIn(lotId, eqpId, txId);// 消费预约
 
         return toTxnVo(lot, TX_TRACK_IN, false);
     }
@@ -350,8 +354,8 @@ public class TrackServiceImpl implements TrackService {
         return vo;
     }
 
-    /** 写入 Track 事务履历 */
-    private void writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus,
+    /** 写入 Track 事务履历，返回履历 ID */
+    private Long writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus,
                             Integer fromSortNo, Integer toSortNo, Long stepId, Long eqpId,
                             Long routeVersionId, String remark) {
         long userId = StpUtil.getLoginIdAsLong();
@@ -372,5 +376,6 @@ public class TrackServiceImpl implements TrackService {
         log.setOperUserName(user != null ? user.getUserName() : null);
         log.setCreateTime(LocalDateTime.now());
         mesTxLogMapper.insert(log);
+        return log.getId();
     }
 }
