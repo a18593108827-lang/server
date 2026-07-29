@@ -2,7 +2,9 @@ package com.mes.dispatch.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mes.common.AssertUtil;
+import com.mes.common.BusinessException;
 import com.mes.dispatch.dto.DispatchReserveCreateDTO;
 import com.mes.dispatch.entity.MesDispatchReserve;
 import com.mes.dispatch.mapper.MesDispatchReserveMapper;
@@ -21,6 +23,7 @@ import com.mes.route.entity.MesStep;
 import com.mes.route.mapper.MesStepMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -165,23 +168,28 @@ public class DispatchServiceImpl implements DispatchService {
         if (mine != null && Objects.equals(mine.getEqpId(), eqp.getId())) {
             return toReserveVo(mine, lot, eqp);
         }
-        // 释放当前批次的预约
+        // 释放当前批次的预约（必须清 slot，否则同批唯一键挡住新约）
         if (mine != null) {
-            mine.setStatus(RESERVE_RELEASED);
-            mine.setRemark(StringUtils.hasText(mine.getRemark()) ? mine.getRemark() : "改约自动释约");
-            mesDispatchReserveMapper.updateById(mine);
+            leaveActive(mine, RESERVE_RELEASED,
+                    StringUtils.hasText(mine.getRemark()) ? mine.getRemark() : "改约自动释约", null);
         }
 
         long userId = StpUtil.getLoginIdAsLong();
         int ttl = reserveTtlMinutes > 0 ? reserveTtlMinutes : 30;
         MesDispatchReserve row = new MesDispatchReserve();
         row.setLotId(lot.getId());
+        row.setLotSlot(lot.getId());
         row.setEqpId(eqp.getId());
+        row.setEqpSlot(eqp.getId());
         row.setStatus(RESERVE_ACTIVE);
         row.setExpireTime(LocalDateTime.now().plusMinutes(ttl));
         row.setReserveUserId(userId);
         row.setRemark(blankToNull(dto.getRemark()));
-        mesDispatchReserveMapper.insert(row);
+        try {
+            mesDispatchReserveMapper.insert(row);
+        } catch (DuplicateKeyException e) {
+            throw duplicateReserveError(e, eqp.getEqpCode());
+        }
         return toReserveVo(row, lot, eqp);
     }
 
@@ -194,11 +202,9 @@ public class DispatchServiceImpl implements DispatchService {
         expireIfNeeded(row);
         AssertUtil.isTrue(RESERVE_ACTIVE.equals(row.getStatus()), "仅生效中的预约可释约");
 
-        row.setStatus(RESERVE_RELEASED);
-        if (StringUtils.hasText(remark)) {
-            row.setRemark(remark.trim());
-        }
-        mesDispatchReserveMapper.updateById(row);
+        String finalRemark = StringUtils.hasText(remark) ? remark.trim() : row.getRemark();
+        leaveActive(row, RESERVE_RELEASED, finalRemark, null);
+        AssertUtil.isTrue(RESERVE_RELEASED.equals(row.getStatus()), "预约状态已变更，请刷新");
 
         MesLot lot = mesLotMapper.selectById(row.getLotId());
         MesEqp eqp = mesEqpMapper.selectById(row.getEqpId());
@@ -258,9 +264,7 @@ public class DispatchServiceImpl implements DispatchService {
         if (eqpId != null && !Objects.equals(active.getEqpId(), eqpId)) {
             return;
         }
-        active.setStatus(RESERVE_CONSUMED);
-        active.setConsumeTxId(txLogId);
-        mesDispatchReserveMapper.updateById(active);
+        leaveActive(active, RESERVE_CONSUMED, null, txLogId);
     }
 
     private String resolveEqpType(MesLot lot) {
@@ -308,15 +312,68 @@ public class DispatchServiceImpl implements DispatchService {
         return row;
     }
 
-    // 检查是否过期
+    // 检查是否过期（退出 active 时清空 slot）
     private void expireIfNeeded(MesDispatchReserve row) {
         if (row == null || !RESERVE_ACTIVE.equals(row.getStatus())) {
             return;
         }
         if (row.getExpireTime() != null && row.getExpireTime().isBefore(LocalDateTime.now())) {
-            row.setStatus(RESERVE_EXPIRED);
-            mesDispatchReserveMapper.updateById(row);
+            leaveActive(row, RESERVE_EXPIRED, null, null);
         }
+    }
+
+    /**
+     * active → 终态：清 eqp_slot/lot_slot，腾出唯一坑。
+     * 必须用 UpdateWrapper，updateById 默认不写 null。
+     */
+    private void leaveActive(MesDispatchReserve row, String toStatus, String remark, Long consumeTxId) {
+        LambdaUpdateWrapper<MesDispatchReserve> uw = new LambdaUpdateWrapper<>();
+        uw.eq(MesDispatchReserve::getId, row.getId())
+                .eq(MesDispatchReserve::getStatus, RESERVE_ACTIVE)
+                .set(MesDispatchReserve::getStatus, toStatus)
+                .set(MesDispatchReserve::getEqpSlot, null)
+                .set(MesDispatchReserve::getLotSlot, null);
+        if (remark != null) {
+            uw.set(MesDispatchReserve::getRemark, remark);
+        }
+        if (consumeTxId != null) {
+            uw.set(MesDispatchReserve::getConsumeTxId, consumeTxId);
+        }
+        int n = mesDispatchReserveMapper.update(null, uw);
+        if (n > 0) {
+            row.setStatus(toStatus);
+            row.setEqpSlot(null);
+            row.setLotSlot(null);
+            if (remark != null) {
+                row.setRemark(remark);
+            }
+            if (consumeTxId != null) {
+                row.setConsumeTxId(consumeTxId);
+            }
+        } else {
+            MesDispatchReserve fresh = mesDispatchReserveMapper.selectById(row.getId());
+            if (fresh != null) {
+                row.setStatus(fresh.getStatus());
+                row.setEqpSlot(fresh.getEqpSlot());
+                row.setLotSlot(fresh.getLotSlot());
+                row.setRemark(fresh.getRemark());
+                row.setConsumeTxId(fresh.getConsumeTxId());
+            }
+        }
+    }
+
+    private static BusinessException duplicateReserveError(DuplicateKeyException e, String eqpCode) {
+        String msg = e.getMostSpecificCause() != null ? e.getMostSpecificCause().getMessage() : e.getMessage();
+        if (msg == null) {
+            msg = "";
+        }
+        if (msg.contains("uk_reserve_eqp_slot")) {
+            return new BusinessException("设备已被其他批次预约：" + eqpCode);
+        }
+        if (msg.contains("uk_reserve_lot_slot")) {
+            return new BusinessException("批次已有有效预约，请刷新后重试");
+        }
+        return new BusinessException("预约冲突，请刷新后重试");
     }
 
     private Set<Long> loadBlockedEqpIds(Long lotId) {
