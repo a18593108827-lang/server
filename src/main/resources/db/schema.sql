@@ -174,6 +174,10 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (243, 240, 3, 'eqp:status',      '????', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (244, 200, 2, 'dispatch:view',   '??',     '/app/dispatch',  'clipboard-list',  145,1, NOW(), NOW(), 0),
 (245, 244, 3, 'dispatch:reserve','????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(246, 200, 2, 'recipe:view',     '??',     '/app/recipe',    'flask-conical',   150,1, NOW(), NOW(), 0),
+(247, 246, 3, 'recipe:edit',     '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(248, 246, 3, 'recipe:publish',  '????', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(249, 246, 3, 'recipe:bind',     '????', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (250, 200, 2, 'route:list',      '??',     '/app/route',      'map',              15, 1, NOW(), NOW(), 0),
 (251, 250, 3, 'route:add',       '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (252, 250, 3, 'route:edit',      '????', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
@@ -258,6 +262,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1123, 1, 243, NOW()),
 (1124, 1, 244, NOW()),
 (1125, 1, 245, NOW()),
+(1126, 1, 246, NOW()),
+(1127, 1, 247, NOW()),
+(1128, 1, 248, NOW()),
+(1129, 1, 249, NOW()),
 (1105, 1, 250, NOW()),
 (1114, 1, 251, NOW()),
 (1115, 1, 252, NOW()),
@@ -290,7 +298,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1408, 4, 240, NOW()),
 (1409, 4, 243, NOW()),
 (1410, 4, 244, NOW()),
-(1411, 4, 245, NOW())
+(1411, 4, 245, NOW()),
+(1412, 4, 246, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -324,6 +333,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1317, 3, 243, NOW()),
 (1318, 3, 244, NOW()),
 (1319, 3, 245, NOW()),
+(1320, 3, 246, NOW()),
+(1321, 3, 247, NOW()),
+(1322, 3, 248, NOW()),
+(1323, 3, 249, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -472,6 +485,8 @@ CREATE TABLE IF NOT EXISTS mes_tx_log (
     to_sort_no        INT                    COMMENT '?????',
     step_id           BIGINT                 COMMENT '????',
     eqp_id            BIGINT                 COMMENT '????',
+    recipe_id         BIGINT                 COMMENT '??ID',
+    recipe_version_id BIGINT                 COMMENT '??????ID',
     route_version_id  BIGINT                 COMMENT '??????',
     remark            VARCHAR(512)           COMMENT '??',
     oper_user_id      BIGINT                 COMMENT '???',
@@ -674,3 +689,61 @@ CREATE TABLE IF NOT EXISTS mes_dispatch_reserve (
     KEY idx_reserve_lot_status (lot_id, status),
     KEY idx_reserve_eqp_status (eqp_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='?????????????????';
+
+-- =========================
+-- Recipe (see migrate_recipe.sql)
+-- mes_recipe_version.status: draft/active/obsolete
+-- =========================
+CREATE TABLE IF NOT EXISTS mes_recipe (
+    id            BIGINT       NOT NULL COMMENT 'PK',
+    recipe_code   VARCHAR(64)  NOT NULL COMMENT 'recipe code',
+    recipe_name   VARCHAR(128) NOT NULL COMMENT 'recipe name',
+    enabled       TINYINT      NOT NULL DEFAULT 1 COMMENT '1 enabled',
+    remark        VARCHAR(256)          COMMENT 'remark',
+    version       INT          NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
+    create_by     BIGINT                COMMENT 'create by',
+    update_by     BIGINT                COMMENT 'update by',
+    create_time   DATETIME              COMMENT 'create time',
+    update_time   DATETIME              COMMENT 'update time',
+    deleted       TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_recipe_code (recipe_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='recipe master';
+
+CREATE TABLE IF NOT EXISTS mes_recipe_version (
+    id               BIGINT       NOT NULL COMMENT 'PK',
+    recipe_id        BIGINT       NOT NULL COMMENT 'recipe id',
+    version_no       INT          NOT NULL COMMENT 'version no',
+    status           VARCHAR(16)  NOT NULL DEFAULT 'draft' COMMENT 'draft/active/obsolete',
+    body_json        TEXT                  COMMENT 'params json',
+    body_object_key  VARCHAR(256)          COMMENT 'minio key',
+    remark           VARCHAR(256)          COMMENT 'remark',
+    published_at     DATETIME              COMMENT 'published at',
+    create_by        BIGINT                COMMENT 'create by',
+    update_by        BIGINT                COMMENT 'update by',
+    create_time      DATETIME              COMMENT 'create time',
+    update_time      DATETIME              COMMENT 'update time',
+    deleted          TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_recipe_ver (recipe_id, version_no),
+    KEY idx_recipe_ver_status (recipe_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='recipe version';
+
+CREATE TABLE IF NOT EXISTS mes_recipe_binding (
+    id                  BIGINT       NOT NULL COMMENT 'PK',
+    step_id             BIGINT       NOT NULL COMMENT 'step id',
+    eqp_id              BIGINT                COMMENT 'eqp id',
+    eqp_type            VARCHAR(64)           COMMENT 'eqp type',
+    recipe_id           BIGINT       NOT NULL COMMENT 'recipe id',
+    recipe_version_id   BIGINT                COMMENT 'version id or follow active',
+    enabled             TINYINT      NOT NULL DEFAULT 1 COMMENT '1 enabled',
+    create_by           BIGINT                COMMENT 'create by',
+    update_by           BIGINT                COMMENT 'update by',
+    create_time         DATETIME              COMMENT 'create time',
+    update_time         DATETIME              COMMENT 'update time',
+    deleted             TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    KEY idx_bind_step (step_id, enabled),
+    KEY idx_bind_eqp (eqp_id),
+    KEY idx_bind_type (step_id, eqp_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='recipe step-eqp binding';
