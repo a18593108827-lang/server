@@ -4,18 +4,19 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-/** 配方主数据 */
+/** 配方版本详情 */
 @Data
-public class MesRecipeVO {
+public class MesRecipeVersionDetailVO {
     private Long id;
+    private Long recipeId;
     private String recipeCode;
     private String recipeName;
-    private Integer enabled;
+    private Integer versionNo;
+    private String status;
+    private String bodyJson;
+    private String bodyObjectKey;
     private String remark;
-    private Integer version;
-    /** 当前生效版本 */
-    private Long activeVersionId;
-    private Integer activeVersionNo;
+    private LocalDateTime publishedAt;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }
