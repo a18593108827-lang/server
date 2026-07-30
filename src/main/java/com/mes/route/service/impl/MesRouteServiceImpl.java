@@ -11,14 +11,17 @@ import com.mes.route.dto.MesRouteQuery;
 import com.mes.route.dto.MesRouteStepsSaveDTO;
 import com.mes.route.dto.MesRouteUpgradeDTO;
 import com.mes.route.entity.MesRoute;
+import com.mes.route.entity.MesRouteEdge;
 import com.mes.route.entity.MesRouteStep;
 import com.mes.route.entity.MesRouteVersion;
 import com.mes.route.entity.MesStep;
+import com.mes.route.mapper.MesRouteEdgeMapper;
 import com.mes.route.mapper.MesRouteMapper;
 import com.mes.route.mapper.MesRouteStepMapper;
 import com.mes.route.mapper.MesRouteVersionMapper;
 import com.mes.route.mapper.MesStepMapper;
 import com.mes.route.service.MesRouteService;
+import com.mes.route.vo.MesRouteEdgeVO;
 import com.mes.route.vo.MesRouteStepVO;
 import com.mes.route.vo.MesRouteVO;
 import com.mes.route.vo.MesRouteVersionDetailVO;
@@ -52,9 +55,13 @@ public class MesRouteServiceImpl implements MesRouteService {
     /** 归档 */
     public static final String STATUS_ARCHIVED = "archived";
 
+    public static final String EDGE_REWORK = "rework";
+    public static final String EDGE_NORMAL = "normal";
+
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
     private final MesRouteStepMapper mesRouteStepMapper;
+    private final MesRouteEdgeMapper mesRouteEdgeMapper;
     private final MesStepMapper mesStepMapper;
 
     @Override
@@ -201,6 +208,7 @@ public class MesRouteServiceImpl implements MesRouteService {
             stepVos.add(svo);
         }
         vo.setSteps(stepVos);
+        vo.setEdges(listEdgeVos(versionId));
         return vo;
     }
 
@@ -225,6 +233,26 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setNextSortNo(item.getNextSortNo());
             mesRouteStepMapper.insert(row);
         }
+
+        // 删除旧边插入新边
+        if (dto.getEdges() != null) {
+            Set<Integer> sortNos = items.stream().map(MesRouteStepsSaveDTO.Item::getSortNo)
+                    .collect(Collectors.toSet());
+            validateEdgeItems(dto.getEdges(), sortNos);
+            mesRouteEdgeMapper.physicalDeleteByVersionId(versionId);
+            int i = 0;
+            for (MesRouteStepsSaveDTO.EdgeItem edge : dto.getEdges()) {
+                MesRouteEdge row = new MesRouteEdge();
+                row.setVersionId(versionId);
+                row.setFromSortNo(edge.getFromSortNo());
+                row.setToSortNo(edge.getToSortNo());
+                row.setEdgeType(edge.getEdgeType().trim().toLowerCase());
+                row.setMaxReworkCount(edge.getMaxReworkCount());
+                row.setReasonCodes(blankToNull(edge.getReasonCodes()));
+                row.setSortNo(edge.getSortNo() != null ? edge.getSortNo() : i++);
+                mesRouteEdgeMapper.insert(row);
+            }
+        }
     }
 
     @Override
@@ -239,6 +267,11 @@ public class MesRouteServiceImpl implements MesRouteService {
                 .orderByAsc(MesRouteStep::getSortNo));
         AssertUtil.notEmpty(steps, "至少配置一个步骤才能发布");
         validatePersistedSteps(steps);
+
+        Set<Integer> sortNos = steps.stream().map(MesRouteStep::getSortNo).collect(Collectors.toSet());
+        List<MesRouteEdge> edges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, versionId));
+        validatePersistedEdges(edges, sortNos);
 
         // 旧版进行归档处理（修改状态）
         mesRouteVersionMapper.update(null, new LambdaUpdateWrapper<MesRouteVersion>()
@@ -287,7 +320,6 @@ public class MesRouteServiceImpl implements MesRouteService {
         List<MesRouteStep> fromSteps = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
                 .eq(MesRouteStep::getVersionId, from.getId())
                 .orderByAsc(MesRouteStep::getSortNo));
-        // 将源步骤复制到新版本
         for (MesRouteStep src : fromSteps) {
             MesRouteStep row = new MesRouteStep();
             row.setVersionId(draft.getId());
@@ -296,7 +328,88 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setNextSortNo(src.getNextSortNo());
             mesRouteStepMapper.insert(row);
         }
+
+        // 获取源版本所有边
+        List<MesRouteEdge> fromEdges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, from.getId())
+                .orderByAsc(MesRouteEdge::getSortNo));
+        // 复制源版本所有边到新版本
+        for (MesRouteEdge src : fromEdges) {
+            MesRouteEdge row = new MesRouteEdge();
+            row.setVersionId(draft.getId());
+            row.setFromSortNo(src.getFromSortNo());
+            row.setToSortNo(src.getToSortNo());
+            row.setEdgeType(src.getEdgeType());
+            row.setMaxReworkCount(src.getMaxReworkCount());
+            row.setReasonCodes(src.getReasonCodes());
+            row.setSortNo(src.getSortNo());
+            mesRouteEdgeMapper.insert(row);
+        }
         return draft.getId();
+    }
+
+    /**
+     * 获取当前版本的所有边
+     */
+    private List<MesRouteEdgeVO> listEdgeVos(Long versionId) {
+        List<MesRouteEdge> edges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, versionId)
+                .orderByAsc(MesRouteEdge::getFromSortNo)
+                .orderByAsc(MesRouteEdge::getSortNo));
+        List<MesRouteEdgeVO> list = new ArrayList<>(edges.size());
+        for (MesRouteEdge e : edges) {
+            MesRouteEdgeVO vo = new MesRouteEdgeVO();
+            vo.setId(e.getId());
+            vo.setFromSortNo(e.getFromSortNo());
+            vo.setToSortNo(e.getToSortNo());
+            vo.setEdgeType(e.getEdgeType());
+            vo.setMaxReworkCount(e.getMaxReworkCount());
+            vo.setReasonCodes(e.getReasonCodes());
+            vo.setSortNo(e.getSortNo());
+            list.add(vo);
+        }
+        return list;
+    }
+
+    /**
+     * 校验边的合法性
+     */
+    private void validateEdgeItems(List<MesRouteStepsSaveDTO.EdgeItem> edges, Set<Integer> sortNos) {
+        Set<String> uniq = new HashSet<>();
+        for (MesRouteStepsSaveDTO.EdgeItem edge : edges) {
+            AssertUtil.notNull(edge.getFromSortNo(), "边起点不能为空");
+            AssertUtil.notNull(edge.getToSortNo(), "边终点不能为空");
+            AssertUtil.notBlank(edge.getEdgeType(), "边类型不能为空");
+            String type = edge.getEdgeType().trim().toLowerCase();
+            AssertUtil.isTrue(sortNos.contains(edge.getFromSortNo()),
+                    "边起点顺序号不存在: " + edge.getFromSortNo());
+            AssertUtil.isTrue(sortNos.contains(edge.getToSortNo()),
+                    "边终点顺序号不存在: " + edge.getToSortNo());
+            AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
+                    "边不能指向自身");
+            String key = edge.getFromSortNo() + "-" + edge.getToSortNo() + "-" + type;
+            AssertUtil.isTrue(uniq.add(key), "边重复: " + key);
+            if (EDGE_REWORK.equals(type)) {
+                AssertUtil.notNull(edge.getMaxReworkCount(), "回流边须配置次数上限");
+                AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "回流次数上限须≥1");
+            }
+        }
+    }
+
+    /** 校验已保存的边合法性 */
+    private void validatePersistedEdges(List<MesRouteEdge> edges, Set<Integer> sortNos) {
+        for (MesRouteEdge edge : edges) {
+            AssertUtil.isTrue(sortNos.contains(edge.getFromSortNo()),
+                    "边起点顺序号不存在: " + edge.getFromSortNo());
+            AssertUtil.isTrue(sortNos.contains(edge.getToSortNo()),
+                    "边终点顺序号不存在: " + edge.getToSortNo());
+            if (EDGE_REWORK.equals(edge.getEdgeType())) {
+                AssertUtil.notNull(edge.getMaxReworkCount(), "回流边须配置次数上限");
+                AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "回流次数上限须≥1");
+                AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
+                        "回流边不能指向自身");
+            }
+        }
     }
 
     /** 校验保存入参：顺序号唯一、下一站合法、工序存在且启用 */

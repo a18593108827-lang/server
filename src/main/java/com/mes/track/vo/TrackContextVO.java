@@ -3,6 +3,8 @@ package com.mes.track.vo;
 import com.mes.lot.vo.MesLotStepVO;
 import lombok.Data;
 
+import java.util.List;
+
 /** 现场台执行上下文（只读） */
 @Data
 public class TrackContextVO {
@@ -19,5 +21,8 @@ public class TrackContextVO {
     private MesLotStepVO nextStep;
     private Boolean canTrackIn;
     private Boolean canTrackOut;
+    private Boolean canRework;
+    private Integer reworkCount;
+    private List<TrackReworkOptionVO> reworkOptions;
     private Boolean completed;
 }

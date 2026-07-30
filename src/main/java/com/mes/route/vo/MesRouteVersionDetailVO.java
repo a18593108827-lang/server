@@ -22,4 +22,6 @@ public class MesRouteVersionDetailVO {
     private String remark;
     /** 按 sortNo 升序 */
     private List<MesRouteStepVO> steps;
+    /** 边（含 rework） */
+    private List<MesRouteEdgeVO> edges;
 }

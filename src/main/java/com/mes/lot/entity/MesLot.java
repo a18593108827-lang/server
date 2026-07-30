@@ -50,6 +50,9 @@ public class MesLot extends BaseEntity {
     /** 当前设备 ID（TrackIn 后；一期可空） */
     private Long currentEqpId;
 
+    /** 按触发站累计返工次数 JSON，如 {"60":1} */
+    private String reworkCounts;
+
     /**
      * 状态：created 已创建 / released 已放行(过渡) / wait 等待加工 /
      * processing 加工中 / held 锁批 / completed 已完工 / scrapped 已报废

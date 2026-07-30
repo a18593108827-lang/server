@@ -1,6 +1,8 @@
 package com.mes.track.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import cn.hutool.json.JSONObject;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.common.AssertUtil;
 import com.mes.dispatch.service.DispatchService;
@@ -12,9 +14,11 @@ import com.mes.lot.vo.MesLotStepVO;
 import com.mes.recipe.facade.RecipeFacade;
 import com.mes.recipe.vo.RecipeResolveVO;
 import com.mes.route.entity.MesRoute;
+import com.mes.route.entity.MesRouteEdge;
 import com.mes.route.entity.MesRouteStep;
 import com.mes.route.entity.MesRouteVersion;
 import com.mes.route.entity.MesStep;
+import com.mes.route.mapper.MesRouteEdgeMapper;
 import com.mes.route.mapper.MesRouteMapper;
 import com.mes.route.mapper.MesRouteStepMapper;
 import com.mes.route.mapper.MesRouteVersionMapper;
@@ -27,14 +31,17 @@ import com.mes.track.service.TrackService;
 import com.mes.track.vo.MesTxLogVO;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackReleaseResultVO;
+import com.mes.track.vo.TrackReworkOptionVO;
 import com.mes.track.vo.TrackTxnResultVO;
 import com.mes.wip.service.WipProjectionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -58,11 +65,14 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_RELEASE = "RELEASE";
     public static final String TX_TRACK_IN = "TRACK_IN";
     public static final String TX_TRACK_OUT = "TRACK_OUT";
+    public static final String TX_REWORK = "REWORK";
+    public static final String EDGE_REWORK = "rework";
 
     private final MesLotMapper mesLotMapper;
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
     private final MesRouteStepMapper mesRouteStepMapper;
+    private final MesRouteEdgeMapper mesRouteEdgeMapper;
     private final MesStepMapper mesStepMapper;
     private final MesTxLogMapper mesTxLogMapper;
     private final SysUserMapper sysUserMapper;
@@ -104,6 +114,7 @@ public class TrackServiceImpl implements TrackService {
         lot.setCurrentSortNo(firstStep.getSortNo());
         lot.setCurrentStepId(firstStep.getStepId());
         lot.setCurrentEqpId(null);
+        lot.setReworkCounts(null);
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
@@ -217,6 +228,76 @@ public class TrackServiceImpl implements TrackService {
     }
 
     @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackTxnResultVO rework(Long lotId, Integer toSortNo, String reasonCode, String remark) {
+        MesLot lot = requireExecutableLot(lotId);
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus()),
+                "仅等待或加工中状态可返工");
+        AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法返工");
+        AssertUtil.notNull(toSortNo, "回流目标站不能为空");
+
+        Integer fromSortNo = lot.getCurrentSortNo();
+        MesRouteEdge edge = mesRouteEdgeMapper.selectOne(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, lot.getRouteVersionId())
+                .eq(MesRouteEdge::getFromSortNo, fromSortNo)
+                .eq(MesRouteEdge::getToSortNo, toSortNo)
+                .eq(MesRouteEdge::getEdgeType, EDGE_REWORK)
+                .last("LIMIT 1"));
+        AssertUtil.notNull(edge, "当前站未配置回流至目标站");
+        AssertUtil.notNull(edge.getMaxReworkCount(), "回流次数上限未配置");
+        AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "回流次数上限异常");
+
+        String reason = reasonCode == null ? null : reasonCode.trim();
+        if (StringUtils.hasText(edge.getReasonCodes())) {
+            AssertUtil.notBlank(reason, "返工原因不能为空");
+            Set<String> allowed = Arrays.stream(edge.getReasonCodes().split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::hasText)
+                    .collect(Collectors.toSet());
+            AssertUtil.isTrue(allowed.contains(reason), "返工原因不匹配");
+        }
+
+        int used = getReworkCount(lot, fromSortNo);
+        AssertUtil.isTrue(used + 1 <= edge.getMaxReworkCount(), "返工次数已达上限");
+
+        MesRouteStep target = mesRouteStepMapper.selectOne(new LambdaQueryWrapper<MesRouteStep>()
+                .eq(MesRouteStep::getVersionId, lot.getRouteVersionId())
+                .eq(MesRouteStep::getSortNo, toSortNo)
+                .last("LIMIT 1"));
+        AssertUtil.notNull(target, "回流目标站不存在");
+
+        String fromStatus = lot.getStatus();
+        Long fromEqpId = lot.getCurrentEqpId();
+        int newCount = used + 1;
+        putReworkCount(lot, fromSortNo, newCount);
+
+        lot.setStatus(STATUS_WAIT);
+        lot.setCurrentSortNo(target.getSortNo());
+        lot.setCurrentStepId(target.getStepId());
+        lot.setCurrentEqpId(null);
+        lot.setUpdateBy(StpUtil.getLoginIdAsLong());
+        int rows = mesLotMapper.updateById(lot);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
+
+        String logRemark = StringUtils.hasText(remark) ? remark.trim() : "返工回流";
+        if (StringUtils.hasText(reason)) {
+            logRemark = logRemark + " | reason=" + reason;
+        }
+        logRemark = logRemark + " | count=" + newCount + "/" + edge.getMaxReworkCount()
+                + " | edgeId=" + edge.getId();
+
+        writeTxLog(lot, TX_REWORK, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
+                target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null);
+
+        TrackTxnResultVO vo = toTxnVo(lot, TX_REWORK, false);
+        vo.setReworkCount(newCount);
+        vo.setMaxReworkCount(edge.getMaxReworkCount());
+        return vo;
+    }
+
+    @Override
     public TrackContextVO context(Long lotId) {
         MesLot lot = mesLotMapper.selectById(lotId);
         AssertUtil.notNull(lot, "批次不存在");
@@ -233,6 +314,9 @@ public class TrackServiceImpl implements TrackService {
         vo.setCompleted(STATUS_COMPLETED.equals(lot.getStatus()));
         vo.setCanTrackIn(STATUS_WAIT.equals(lot.getStatus()));
         vo.setCanTrackOut(STATUS_PROCESSING.equals(lot.getStatus()));
+        vo.setReworkOptions(Collections.emptyList());
+        vo.setCanRework(false);
+        vo.setReworkCount(lot.getCurrentSortNo() != null ? getReworkCount(lot, lot.getCurrentSortNo()) : 0);
 
         if (lot.getRouteVersionId() != null) {
             MesRouteVersion version = mesRouteVersionMapper.selectById(lot.getRouteVersionId());
@@ -263,7 +347,92 @@ public class TrackServiceImpl implements TrackService {
                 vo.setNextStep(toStepVo(next));
             }
         }
+
+        List<MesRouteEdge> reworkEdges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, lot.getRouteVersionId())
+                .eq(MesRouteEdge::getFromSortNo, lot.getCurrentSortNo())
+                .eq(MesRouteEdge::getEdgeType, EDGE_REWORK)
+                .orderByAsc(MesRouteEdge::getSortNo));
+        if (!reworkEdges.isEmpty()) {
+            Set<Integer> toSorts = reworkEdges.stream().map(MesRouteEdge::getToSortNo).collect(Collectors.toSet());
+            Map<Integer, MesRouteStep> stepBySort = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                            .eq(MesRouteStep::getVersionId, lot.getRouteVersionId())
+                            .in(MesRouteStep::getSortNo, toSorts))
+                    .stream()
+                    .collect(Collectors.toMap(MesRouteStep::getSortNo, s -> s, (a, b) -> a));
+            Set<Long> stepIds = stepBySort.values().stream().map(MesRouteStep::getStepId).collect(Collectors.toSet());
+            Map<Long, MesStep> stepMap = stepIds.isEmpty()
+                    ? Collections.emptyMap()
+                    : mesStepMapper.selectBatchIds(stepIds).stream()
+                    .collect(Collectors.toMap(MesStep::getId, s -> s, (a, b) -> a));
+
+            List<TrackReworkOptionVO> options = new ArrayList<>();
+            int used = getReworkCount(lot, lot.getCurrentSortNo());
+            for (MesRouteEdge edge : reworkEdges) {
+                int remain = Math.max(0, edge.getMaxReworkCount() - used);
+                if (remain <= 0) {
+                    continue;
+                }
+                TrackReworkOptionVO opt = new TrackReworkOptionVO();
+                opt.setToSortNo(edge.getToSortNo());
+                opt.setMaxReworkCount(edge.getMaxReworkCount());
+                opt.setRemainCount(remain);
+                if (StringUtils.hasText(edge.getReasonCodes())) {
+                    opt.setReasonCodes(Arrays.stream(edge.getReasonCodes().split(","))
+                            .map(String::trim)
+                            .filter(StringUtils::hasText)
+                            .toList());
+                } else {
+                    opt.setReasonCodes(Collections.emptyList());
+                }
+                MesRouteStep target = stepBySort.get(edge.getToSortNo());
+                if (target != null) {
+                    MesStep step = stepMap.get(target.getStepId());
+                    if (step != null) {
+                        opt.setToStepCode(step.getStepCode());
+                        opt.setToStepName(step.getStepName());
+                    }
+                }
+                options.add(opt);
+            }
+            vo.setReworkOptions(options);
+            boolean statusOk = STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus());
+            vo.setCanRework(statusOk && !options.isEmpty() && StpUtil.hasPermission("track:rework"));
+        }
         return vo;
+    }
+
+    /*
+     * 获取返工次数
+     */
+    private int getReworkCount(MesLot lot, Integer fromSortNo) {
+        if (fromSortNo == null || !StringUtils.hasText(lot.getReworkCounts())) {
+            return 0;
+        }
+        try {
+            JSONObject obj = JSONUtil.parseObj(lot.getReworkCounts());
+            return obj.getInt(String.valueOf(fromSortNo), 0);
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /*
+     * 设置返工次数
+     */
+    private void putReworkCount(MesLot lot, Integer fromSortNo, int count) {
+        JSONObject obj;
+        if (StringUtils.hasText(lot.getReworkCounts())) {
+            try {
+                obj = JSONUtil.parseObj(lot.getReworkCounts());
+            } catch (Exception e) {
+                obj = new JSONObject();
+            }
+        } else {
+            obj = new JSONObject();
+        }
+        obj.set(String.valueOf(fromSortNo), count);
+        lot.setReworkCounts(obj.toString());
     }
 
     @Override
@@ -327,6 +496,7 @@ public class TrackServiceImpl implements TrackService {
         return stepVo;
     }
 
+    /** 获取有效批次 */
     private MesLot requireExecutableLot(Long lotId) {
         MesLot lot = mesLotMapper.selectById(lotId);
         AssertUtil.notNull(lot, "批次不存在");

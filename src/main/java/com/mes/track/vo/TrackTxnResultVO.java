@@ -15,4 +15,7 @@ public class TrackTxnResultVO {
     private Long routeVersionId;
     /** 是否已完工 */
     private Boolean completed;
+    /** Rework 后当前触发站累计次数 */
+    private Integer reworkCount;
+    private Integer maxReworkCount;
 }

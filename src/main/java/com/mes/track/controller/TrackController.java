@@ -7,6 +7,7 @@ import com.mes.common.annotation.OperLog;
 import com.mes.track.dto.TrackInDTO;
 import com.mes.track.dto.TrackOutDTO;
 import com.mes.track.dto.TrackReleaseDTO;
+import com.mes.track.dto.TrackReworkDTO;
 import com.mes.track.service.TrackService;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackReleaseResultVO;
@@ -53,6 +54,14 @@ public class TrackController {
     @PostMapping("/track-out")
     public R<TrackTxnResultVO> trackOut(@Valid @RequestBody TrackOutDTO dto) {
         return R.ok(trackService.trackOut(dto.getLotId()));
+    }
+
+    /** 返工回流 */
+    @SaCheckPermission("track:rework")
+    @OperLog(module = "Track", action = "Rework")
+    @PostMapping("/rework")
+    public R<TrackTxnResultVO> rework(@Valid @RequestBody TrackReworkDTO dto) {
+        return R.ok(trackService.rework(dto.getLotId(), dto.getToSortNo(), dto.getReasonCode(), dto.getRemark()));
     }
 
     /** 执行上下文（只读） */

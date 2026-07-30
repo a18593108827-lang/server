@@ -191,6 +191,7 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (292, 290, 3, 'track:track-out', 'Track Out',NULL,              NULL,               2,  1, NOW(), NOW(), 0),
 (293, 290, 3, 'track:release',   '??',     NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (294, 290, 3, 'track:move',      '??',     NULL,              NULL,               4,  1, NOW(), NOW(), 0),
+(295, 290, 3, 'track:rework',    '返工',   NULL,              NULL,               5,  1, NOW(), NOW(), 0),
 -- ????
 (100, 0,   1, 'system',              '????', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
 (110, 100, 2, 'system:user',         '????', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
@@ -278,7 +279,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1112, 1, 291, NOW()),
 (1113, 1, 292, NOW()),
 (1119, 1, 293, NOW()),
-(1120, 1, 294, NOW())
+(1120, 1, 294, NOW()),
+(1130, 1, 295, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor????? + ????
@@ -299,7 +301,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1409, 4, 243, NOW()),
 (1410, 4, 244, NOW()),
 (1411, 4, 245, NOW()),
-(1412, 4, 246, NOW())
+(1412, 4, 246, NOW()),
+(1413, 4, 295, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -337,6 +340,7 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1321, 3, 247, NOW()),
 (1322, 3, 248, NOW()),
 (1323, 3, 249, NOW()),
+(1324, 3, 295, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -436,6 +440,27 @@ INSERT INTO mes_route_step (id, version_id, step_id, sort_no, next_sort_no, crea
 (5206, 5101, 5006, 60, NULL, NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE step_id = VALUES(step_id), next_sort_no = VALUES(next_sort_no), update_time = NOW();
 
+CREATE TABLE IF NOT EXISTS mes_route_edge (
+    id                 BIGINT        NOT NULL COMMENT '主键',
+    version_id         BIGINT        NOT NULL COMMENT '路线版本ID',
+    from_sort_no       INT           NOT NULL COMMENT '触发站顺序号',
+    to_sort_no         INT           NOT NULL COMMENT '目标站顺序号',
+    edge_type          VARCHAR(16)   NOT NULL COMMENT 'normal/branch/rework/skip_allow',
+    max_rework_count   INT                    COMMENT 'rework次数上限',
+    reason_codes       VARCHAR(256)           COMMENT '逗号分隔原因码',
+    sort_no            INT           NOT NULL DEFAULT 0 COMMENT '同站多边排序',
+    create_time        DATETIME               COMMENT '创建时间',
+    update_time        DATETIME               COMMENT '更新时间',
+    deleted            TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_ver_edge (version_id, from_sort_no, to_sort_no, edge_type),
+    KEY idx_ver_from (version_id, from_sort_no, edge_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='路线版本边';
+
+INSERT INTO mes_route_edge (id, version_id, from_sort_no, to_sort_no, edge_type, max_rework_count, reason_codes, sort_no, create_time, update_time, deleted)
+VALUES (5301, 5101, 60, 10, 'rework', 2, 'CD_FAIL,OVERLAY_FAIL', 0, NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE max_rework_count = VALUES(max_rework_count), update_time = NOW();
+
 -- =========================
 -- Lot ?????? migrate_lot.sql?
 -- =========================
@@ -451,6 +476,7 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     current_sort_no   INT                    COMMENT '???????????',
     current_step_id   BIGINT                 COMMENT '????ID',
     current_eqp_id    BIGINT                 COMMENT '????ID?TrackIn??',
+    rework_counts     VARCHAR(512)           COMMENT '按触发站累计返工次数JSON',
     status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT '??: created???/released???/wait????/processing???/held??/completed???/scrapped???',
     remark            VARCHAR(512)           COMMENT '??',
     version           INT           NOT NULL DEFAULT 0 COMMENT '???',
