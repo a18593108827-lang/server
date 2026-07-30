@@ -27,6 +27,8 @@ public class MesTxLog {
     private Integer toSortNo;
     private Long stepId;
     private Long eqpId;
+    private Long recipeId;
+    private Long recipeVersionId;
     private Long routeVersionId;
     private String remark;
     private Long operUserId;

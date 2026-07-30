@@ -9,6 +9,8 @@ import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.lot.vo.MesLotStepVO;
+import com.mes.recipe.facade.RecipeFacade;
+import com.mes.recipe.vo.RecipeResolveVO;
 import com.mes.route.entity.MesRoute;
 import com.mes.route.entity.MesRouteStep;
 import com.mes.route.entity.MesRouteVersion;
@@ -68,6 +70,7 @@ public class TrackServiceImpl implements TrackService {
     private final HoldService holdService;
     private final MesEqpService mesEqpService;
     private final DispatchService dispatchService;
+    private final RecipeFacade recipeFacade;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -107,7 +110,7 @@ public class TrackServiceImpl implements TrackService {
         wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_RELEASE, fromStatus, STATUS_WAIT, fromSortNo, firstStep.getSortNo(),
-                firstStep.getStepId(), null, active.getId(), "放行进首站");
+                firstStep.getStepId(), null, active.getId(), "放行进首站", null, null);
 
         TrackReleaseResultVO vo = new TrackReleaseResultVO();
         vo.setLotId(lot.getId());
@@ -135,6 +138,8 @@ public class TrackServiceImpl implements TrackService {
         AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
 
         MesRouteStep current = requireCurrentStep(lot);
+        recipeFacade.assertQualified(current.getStepId(), eqpId);
+        RecipeResolveVO recipe = recipeFacade.resolve(current.getStepId(), eqpId);
         String fromStatus = lot.getStatus();
         Integer fromSortNo = lot.getCurrentSortNo();
 
@@ -146,7 +151,9 @@ public class TrackServiceImpl implements TrackService {
         wipProjectionService.syncFromLot(lot);
 
         Long txId = writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
-                current.getStepId(), eqpId, lot.getRouteVersionId(), "开工");
+                current.getStepId(), eqpId, lot.getRouteVersionId(), "开工",
+                recipe != null ? recipe.getRecipeId() : null,
+                recipe != null ? recipe.getVersionId() : null);
         dispatchService.consumeOnTrackIn(lotId, eqpId, txId);// 消费预约
 
         return toTxnVo(lot, TX_TRACK_IN, false);
@@ -204,7 +211,7 @@ public class TrackServiceImpl implements TrackService {
         wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_TRACK_OUT, fromStatus, toStatus, fromSortNo, toSortNo,
-                toStepId, fromEqpId, lot.getRouteVersionId(), remark);
+                toStepId, fromEqpId, lot.getRouteVersionId(), remark, null, null);
 
         return toTxnVo(lot, TX_TRACK_OUT, completed);
     }
@@ -295,6 +302,8 @@ public class TrackServiceImpl implements TrackService {
             item.setStepId(row.getStepId());
             item.setStepName(row.getStepId() != null ? stepNameMap.get(row.getStepId()) : null);
             item.setEqpId(row.getEqpId());
+            item.setRecipeId(row.getRecipeId());
+            item.setRecipeVersionId(row.getRecipeVersionId());
             item.setRouteVersionId(row.getRouteVersionId());
             item.setRemark(row.getRemark());
             item.setOperUserId(row.getOperUserId());
@@ -357,7 +366,7 @@ public class TrackServiceImpl implements TrackService {
     /** 写入 Track 事务履历，返回履历 ID */
     private Long writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus,
                             Integer fromSortNo, Integer toSortNo, Long stepId, Long eqpId,
-                            Long routeVersionId, String remark) {
+                            Long routeVersionId, String remark, Long recipeId, Long recipeVersionId) {
         long userId = StpUtil.getLoginIdAsLong();
         SysUser user = sysUserMapper.selectById(userId);
         MesTxLog log = new MesTxLog();
@@ -370,6 +379,8 @@ public class TrackServiceImpl implements TrackService {
         log.setToSortNo(toSortNo);
         log.setStepId(stepId);
         log.setEqpId(eqpId);
+        log.setRecipeId(recipeId);
+        log.setRecipeVersionId(recipeVersionId);
         log.setRouteVersionId(routeVersionId);
         log.setRemark(remark);
         log.setOperUserId(userId);

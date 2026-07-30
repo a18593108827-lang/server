@@ -19,6 +19,7 @@ import com.mes.equipment.service.impl.MesEqpServiceImpl;
 import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
+import com.mes.recipe.facade.RecipeFacade;
 import com.mes.route.entity.MesStep;
 import com.mes.route.mapper.MesStepMapper;
 import lombok.RequiredArgsConstructor;
@@ -57,6 +58,7 @@ public class DispatchServiceImpl implements DispatchService {
     private final MesDispatchReserveMapper mesDispatchReserveMapper;
     private final HoldService holdService;
     private final MesEqpService mesEqpService;
+    private final RecipeFacade recipeFacade;
 
     /** 预约超时分钟数，默认 30 */
     @Value("${mes.dispatch.reserve-ttl-minutes:30}")
@@ -101,9 +103,15 @@ public class DispatchServiceImpl implements DispatchService {
         Set<Long> blockedEqpIds = loadBlockedEqpIds(lotId);
         Map<Long, Integer> loadMap = loadCounts(rows.stream().map(MesEqp::getId).collect(Collectors.toList()));
 
+        List<Long> eqpIds = rows.stream().map(MesEqp::getId).collect(Collectors.toList());
+        Set<Long> qualified = new HashSet<>(recipeFacade.listQualifiedEqpIds(lot.getCurrentStepId(), eqpIds));
+
         List<DispatchCandidateItemVO> items = new ArrayList<>();
         for (MesEqp row : rows) {
             if (blockedEqpIds.contains(row.getId())) {
+                continue;
+            }
+            if (!qualified.contains(row.getId())) {
                 continue;
             }
             int load = loadMap.getOrDefault(row.getId(), 0);
@@ -131,8 +139,12 @@ public class DispatchServiceImpl implements DispatchService {
         vo.setCandidates(items);
         if (!items.isEmpty()) {
             vo.setRecommendedEqpId(items.get(0).getEqpId());
-        } else {
+        } else if (rows.isEmpty()) {
+            vo.setMessage("无可用设备");
+        } else if (!blockedEqpIds.isEmpty() && qualified.size() == eqpIds.size()) {
             vo.setMessage("无可用设备（均被预约占用）");
+        } else {
+            vo.setMessage("无可用设备（含配方资格过滤）");
         }
         return vo;
     }

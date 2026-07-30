@@ -1,6 +1,7 @@
 package com.mes.recipe.controller;
 
 import cn.dev33.satoken.annotation.SaCheckPermission;
+import cn.dev33.satoken.annotation.SaMode;
 import com.mes.common.PageResult;
 import com.mes.common.R;
 import com.mes.common.annotation.OperLog;
@@ -10,10 +11,12 @@ import com.mes.recipe.dto.MesRecipeQuery;
 import com.mes.recipe.dto.MesRecipeUpdateDTO;
 import com.mes.recipe.dto.MesRecipeVersionCreateDTO;
 import com.mes.recipe.dto.MesRecipeVersionUpdateDTO;
+import com.mes.recipe.facade.RecipeFacade;
 import com.mes.recipe.service.MesRecipeService;
 import com.mes.recipe.vo.MesRecipeVO;
 import com.mes.recipe.vo.MesRecipeVersionDetailVO;
 import com.mes.recipe.vo.MesRecipeVersionVO;
+import com.mes.recipe.vo.RecipeResolveVO;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +25,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.HashMap;
@@ -29,9 +33,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 配方：主数据 CRUD / 启停；版本草稿 / 发布
+ * 配方：主数据 CRUD / 启停；版本草稿 / 发布；解析
  * <p>
- * 注意：{@code /versions/**} 映射放在 {@code /{id}} 之前，避免路径冲突。
+ * 注意：{@code /versions/**}、{@code /resolve} 映射放在 {@code /{id}} 之前，避免路径冲突。
  */
 @RestController
 @RequestMapping("/recipes")
@@ -39,6 +43,7 @@ import java.util.Map;
 public class MesRecipeController {
 
     private final MesRecipeService mesRecipeService;
+    private final RecipeFacade recipeFacade;
 
     /** 分页列表 */
     @SaCheckPermission("recipe:view")
@@ -53,6 +58,13 @@ public class MesRecipeController {
     @PostMapping
     public R<MesRecipeVO> create(@Valid @RequestBody MesRecipeCreateDTO dto) {
         return R.ok(mesRecipeService.create(dto));
+    }
+
+    /** 解析：Step + Eqp → 生效配方版本（无绑定返回 data=null） */
+    @SaCheckPermission(value = {"recipe:view", "track:view"}, mode = SaMode.OR)
+    @GetMapping("/resolve")
+    public R<RecipeResolveVO> resolve(@RequestParam Long stepId, @RequestParam Long eqpId) {
+        return R.ok(recipeFacade.resolve(stepId, eqpId));
     }
 
     /** 版本详情 */

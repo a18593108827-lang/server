@@ -18,6 +18,8 @@ public class MesTxLogVO {
     private Long stepId;
     private String stepName;
     private Long eqpId;
+    private Long recipeId;
+    private Long recipeVersionId;
     private Long routeVersionId;
     private String remark;
     private Long operUserId;
