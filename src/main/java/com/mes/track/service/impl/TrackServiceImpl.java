@@ -121,7 +121,7 @@ public class TrackServiceImpl implements TrackService {
         wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_RELEASE, fromStatus, STATUS_WAIT, fromSortNo, firstStep.getSortNo(),
-                firstStep.getStepId(), null, active.getId(), "放行进首站", null, null);
+                firstStep.getStepId(), null, active.getId(), "放行进首站", null, null, null);
 
         TrackReleaseResultVO vo = new TrackReleaseResultVO();
         vo.setLotId(lot.getId());
@@ -164,7 +164,7 @@ public class TrackServiceImpl implements TrackService {
         Long txId = writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
                 current.getStepId(), eqpId, lot.getRouteVersionId(), "开工",
                 recipe != null ? recipe.getRecipeId() : null,
-                recipe != null ? recipe.getVersionId() : null);
+                recipe != null ? recipe.getVersionId() : null, null);
         dispatchService.consumeOnTrackIn(lotId, eqpId, txId);// 消费预约
 
         return toTxnVo(lot, TX_TRACK_IN, false);
@@ -222,7 +222,7 @@ public class TrackServiceImpl implements TrackService {
         wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_TRACK_OUT, fromStatus, toStatus, fromSortNo, toSortNo,
-                toStepId, fromEqpId, lot.getRouteVersionId(), remark, null, null);
+                toStepId, fromEqpId, lot.getRouteVersionId(), remark, null, null, null);
 
         return toTxnVo(lot, TX_TRACK_OUT, completed);
     }
@@ -281,15 +281,17 @@ public class TrackServiceImpl implements TrackService {
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
         wipProjectionService.syncFromLot(lot);
 
-        String logRemark = StringUtils.hasText(remark) ? remark.trim() : "返工回流";
+        String logRemark = StringUtils.hasText(remark) ? remark.trim() : null;
+        JSONObject ext = new JSONObject();
         if (StringUtils.hasText(reason)) {
-            logRemark = logRemark + " | reason=" + reason;
+            ext.set("reasonCode", reason);
         }
-        logRemark = logRemark + " | count=" + newCount + "/" + edge.getMaxReworkCount()
-                + " | edgeId=" + edge.getId();
+        ext.set("reworkCount", newCount);
+        ext.set("maxReworkCount", edge.getMaxReworkCount());
+        ext.set("edgeId", String.valueOf(edge.getId()));
 
         writeTxLog(lot, TX_REWORK, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
-                target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null);
+                target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
 
         TrackTxnResultVO vo = toTxnVo(lot, TX_REWORK, false);
         vo.setReworkCount(newCount);
@@ -475,6 +477,7 @@ public class TrackServiceImpl implements TrackService {
             item.setRecipeVersionId(row.getRecipeVersionId());
             item.setRouteVersionId(row.getRouteVersionId());
             item.setRemark(row.getRemark());
+            item.setExtJson(row.getExtJson());
             item.setOperUserId(row.getOperUserId());
             item.setOperUserName(row.getOperUserName());
             item.setCreateTime(row.getCreateTime());
@@ -536,7 +539,8 @@ public class TrackServiceImpl implements TrackService {
     /** 写入 Track 事务履历，返回履历 ID */
     private Long writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus,
                             Integer fromSortNo, Integer toSortNo, Long stepId, Long eqpId,
-                            Long routeVersionId, String remark, Long recipeId, Long recipeVersionId) {
+                            Long routeVersionId, String remark, Long recipeId, Long recipeVersionId,
+                            String extJson) {
         long userId = StpUtil.getLoginIdAsLong();
         SysUser user = sysUserMapper.selectById(userId);
         MesTxLog log = new MesTxLog();
@@ -553,6 +557,7 @@ public class TrackServiceImpl implements TrackService {
         log.setRecipeVersionId(recipeVersionId);
         log.setRouteVersionId(routeVersionId);
         log.setRemark(remark);
+        log.setExtJson(extJson);
         log.setOperUserId(userId);
         log.setOperUserName(user != null ? user.getUserName() : null);
         log.setCreateTime(LocalDateTime.now());

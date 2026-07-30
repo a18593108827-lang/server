@@ -31,6 +31,8 @@ public class MesTxLog {
     private Long recipeVersionId;
     private Long routeVersionId;
     private String remark;
+    /** 事务扩展 JSON（如 Rework 的 reason/count） */
+    private String extJson;
     private Long operUserId;
     private String operUserName;
     private LocalDateTime createTime;

@@ -32,6 +32,17 @@ PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
+SET @exists := (
+  SELECT COUNT(1) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'mes_tx_log' AND COLUMN_NAME = 'ext_json'
+);
+SET @sql := IF(@exists = 0,
+  'ALTER TABLE mes_tx_log ADD COLUMN ext_json VARCHAR(512) NULL COMMENT ''事务扩展JSON'' AFTER remark',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
 -- 演示：METRO-01(60) → PHOTO-01(10)，上限 2
 INSERT INTO mes_route_edge (id, version_id, from_sort_no, to_sort_no, edge_type, max_rework_count, reason_codes, sort_no, create_time, update_time, deleted)
 VALUES (5301, 5101, 60, 10, 'rework', 2, 'CD_FAIL,OVERLAY_FAIL', 0, NOW(), NOW(), 0)

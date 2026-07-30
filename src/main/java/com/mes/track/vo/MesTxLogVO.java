@@ -22,6 +22,7 @@ public class MesTxLogVO {
     private Long recipeVersionId;
     private Long routeVersionId;
     private String remark;
+    private String extJson;
     private Long operUserId;
     private String operUserName;
     private LocalDateTime createTime;

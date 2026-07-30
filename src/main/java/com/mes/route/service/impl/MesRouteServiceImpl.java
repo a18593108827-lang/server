@@ -34,6 +34,7 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -272,6 +273,7 @@ public class MesRouteServiceImpl implements MesRouteService {
         List<MesRouteEdge> edges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
                 .eq(MesRouteEdge::getVersionId, versionId));
         validatePersistedEdges(edges, sortNos);
+        validateReworkCanReachMainEnd(steps, edges);
 
         // 旧版进行归档处理（修改状态）
         mesRouteVersionMapper.update(null, new LambdaUpdateWrapper<MesRouteVersion>()
@@ -409,6 +411,40 @@ public class MesRouteServiceImpl implements MesRouteService {
                 AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
                         "回流边不能指向自身");
             }
+        }
+    }
+
+    /**
+     * 回流弱校验：从目标站沿主路径 next 必须能走到终点（next=null）。
+     * 主路径成环或断链则拒绝发布。
+     */
+    private void validateReworkCanReachMainEnd(List<MesRouteStep> steps, List<MesRouteEdge> edges) {
+        Map<Integer, Integer> nextMap = new HashMap<>();
+        for (MesRouteStep step : steps) {
+            nextMap.put(step.getSortNo(), step.getNextSortNo());
+        }
+        for (MesRouteEdge edge : edges) {
+            if (!EDGE_REWORK.equals(edge.getEdgeType())) {
+                continue;
+            }
+            Integer cur = edge.getToSortNo();
+            Set<Integer> visited = new HashSet<>();
+            boolean reachedEnd = false;
+            while (cur != null) {
+                AssertUtil.isTrue(nextMap.containsKey(cur),
+                        "回流后主路径断链，无法到达终点: " + edge.getFromSortNo() + "→" + edge.getToSortNo()
+                                + "（断于 " + cur + "）");
+                AssertUtil.isTrue(visited.add(cur),
+                        "回流后无法到达终点（主路径成环）: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
+                Integer next = nextMap.get(cur);
+                if (next == null) {
+                    reachedEnd = true;
+                    break;
+                }
+                cur = next;
+            }
+            AssertUtil.isTrue(reachedEnd,
+                    "回流后无法到达主路径终点: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
         }
     }
 

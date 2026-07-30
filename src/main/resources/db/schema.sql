@@ -515,6 +515,7 @@ CREATE TABLE IF NOT EXISTS mes_tx_log (
     recipe_version_id BIGINT                 COMMENT '??????ID',
     route_version_id  BIGINT                 COMMENT '??????',
     remark            VARCHAR(512)           COMMENT '??',
+    ext_json          VARCHAR(512)           COMMENT '事务扩展JSON',
     oper_user_id      BIGINT                 COMMENT '???',
     oper_user_name    VARCHAR(64)            COMMENT '???????',
     create_time       DATETIME      NOT NULL COMMENT '????',
