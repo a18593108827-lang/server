@@ -57,11 +57,11 @@ public class MesRouteServiceImpl implements MesRouteService {
     public static final String STATUS_ARCHIVED = "archived";
 
     /** 回流边：Track 走 /track/rework，带次数上限 */
-    public static final String EDGE_REWORK = "rework";
+    public static final String EDGE_REWORK = com.mes.route.support.RouteEdgeTypes.REWORK;
     /** 默认出边：与步骤 next_sort_no 对齐，TrackOut 无 resultCode 时走这条 */
-    public static final String EDGE_NORMAL = "normal";
+    public static final String EDGE_NORMAL = com.mes.route.support.RouteEdgeTypes.NORMAL;
     /** 条件分支边：TrackOut 带 resultCode 时按 condition_code 匹配 */
-    public static final String EDGE_BRANCH = "branch";
+    public static final String EDGE_BRANCH = com.mes.route.support.RouteEdgeTypes.BRANCH;
 
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
