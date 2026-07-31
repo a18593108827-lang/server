@@ -53,7 +53,7 @@ public class TrackController {
     @OperLog(module = "Track", action = "TrackOut")
     @PostMapping("/track-out")
     public R<TrackTxnResultVO> trackOut(@Valid @RequestBody TrackOutDTO dto) {
-        return R.ok(trackService.trackOut(dto.getLotId()));
+        return R.ok(trackService.trackOut(dto.getLotId(), dto.getResultCode()));
     }
 
     /** 返工回流 */

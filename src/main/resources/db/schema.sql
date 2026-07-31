@@ -448,18 +448,27 @@ CREATE TABLE IF NOT EXISTS mes_route_edge (
     edge_type          VARCHAR(16)   NOT NULL COMMENT 'normal/branch/rework/skip_allow',
     max_rework_count   INT                    COMMENT 'rework次数上限',
     reason_codes       VARCHAR(256)           COMMENT '逗号分隔原因码',
+    condition_code     VARCHAR(64)            COMMENT 'branch条件码',
     sort_no            INT           NOT NULL DEFAULT 0 COMMENT '同站多边排序',
     create_time        DATETIME               COMMENT '创建时间',
     update_time        DATETIME               COMMENT '更新时间',
     deleted            TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_ver_edge (version_id, from_sort_no, to_sort_no, edge_type),
+    UNIQUE KEY uk_ver_edge_cond (version_id, from_sort_no, to_sort_no, edge_type, condition_code),
     KEY idx_ver_from (version_id, from_sort_no, edge_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='路线版本边';
 
-INSERT INTO mes_route_edge (id, version_id, from_sort_no, to_sort_no, edge_type, max_rework_count, reason_codes, sort_no, create_time, update_time, deleted)
-VALUES (5301, 5101, 60, 10, 'rework', 2, 'CD_FAIL,OVERLAY_FAIL', 0, NOW(), NOW(), 0)
+INSERT INTO mes_route_edge (id, version_id, from_sort_no, to_sort_no, edge_type, max_rework_count, reason_codes, condition_code, sort_no, create_time, update_time, deleted)
+VALUES (5301, 5101, 60, 10, 'rework', 2, 'CD_FAIL,OVERLAY_FAIL', NULL, 0, NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE max_rework_count = VALUES(max_rework_count), update_time = NOW();
+
+INSERT INTO mes_route_edge (id, version_id, from_sort_no, to_sort_no, edge_type, max_rework_count, reason_codes, condition_code, sort_no, create_time, update_time, deleted) VALUES
+(5320, 5101, 10, 20, 'normal', NULL, NULL, NULL, 0, NOW(), NOW(), 0),
+(5321, 5101, 20, 30, 'normal', NULL, NULL, NULL, 1, NOW(), NOW(), 0),
+(5322, 5101, 30, 40, 'normal', NULL, NULL, NULL, 2, NOW(), NOW(), 0),
+(5323, 5101, 40, 50, 'normal', NULL, NULL, NULL, 3, NOW(), NOW(), 0),
+(5324, 5101, 50, 60, 'normal', NULL, NULL, NULL, 4, NOW(), NOW(), 0)
+ON DUPLICATE KEY UPDATE to_sort_no = VALUES(to_sort_no), update_time = NOW();
 
 -- =========================
 -- Lot ?????? migrate_lot.sql?

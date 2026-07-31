@@ -47,6 +47,8 @@ public class MesRouteStepsSaveDTO {
 
         private Integer maxReworkCount;
         private String reasonCodes;
+        /** branch 条件码 */
+        private String conditionCode;
         private Integer sortNo;
     }
 }

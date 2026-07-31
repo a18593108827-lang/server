@@ -22,7 +22,9 @@ public class MesRouteEdge extends BaseEntity {
     /** normal / branch / rework / skip_allow */
     private String edgeType;
     private Integer maxReworkCount;
-    /** 逗号分隔；空=任意 */
+    /** 逗号分隔；空=任意；仅 rework */
     private String reasonCodes;
+    /** branch 条件码；normal/rework 为空 */
+    private String conditionCode;
     private Integer sortNo;
 }

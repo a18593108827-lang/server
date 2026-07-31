@@ -29,6 +29,7 @@ import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
 import com.mes.track.service.TrackService;
 import com.mes.track.vo.MesTxLogVO;
+import com.mes.track.vo.TrackBranchOptionVO;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackReleaseResultVO;
 import com.mes.track.vo.TrackReworkOptionVO;
@@ -66,7 +67,10 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_TRACK_IN = "TRACK_IN";
     public static final String TX_TRACK_OUT = "TRACK_OUT";
     public static final String TX_REWORK = "REWORK";
+    /** 与 Route 边类型一致 */
     public static final String EDGE_REWORK = "rework";
+    public static final String EDGE_NORMAL = "normal";
+    public static final String EDGE_BRANCH = "branch";
 
     private final MesLotMapper mesLotMapper;
     private final MesRouteMapper mesRouteMapper;
@@ -170,9 +174,15 @@ public class TrackServiceImpl implements TrackService {
         return toTxnVo(lot, TX_TRACK_IN, false);
     }
 
+    /**
+     * 完工选边：
+     * - 有 resultCode → 只匹配当前站 branch，未命中直接失败（不降级走默认）
+     * - 无 resultCode → 走 normal；旧快照无边表则回退步骤 next_sort_no
+     * - 永不走 rework（返工必须调 /track/rework）
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public TrackTxnResultVO trackOut(Long lotId) {
+    public TrackTxnResultVO trackOut(Long lotId, String resultCode) {
         MesLot lot = requireExecutableLot(lotId);
         holdService.assertNoActive(lotId);
         AssertUtil.isTrue(STATUS_PROCESSING.equals(lot.getStatus()), "仅加工中状态可完工");
@@ -184,36 +194,94 @@ public class TrackServiceImpl implements TrackService {
         Integer fromSortNo = lot.getCurrentSortNo();
         Long fromEqpId = lot.getCurrentEqpId();
 
+        // 当前站出边：仅 normal / branch（不含 rework）
+        String code = StringUtils.hasText(resultCode) ? resultCode.trim().toUpperCase() : null;
+        List<MesRouteEdge> outEdges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, lot.getRouteVersionId())
+                .eq(MesRouteEdge::getFromSortNo, fromSortNo)
+                .in(MesRouteEdge::getEdgeType, EDGE_NORMAL, EDGE_BRANCH));
+
         boolean completed;
         Integer toSortNo;
         Long toStepId;
         String toStatus;
         String remark;
+        String extJson = null;
 
-        if (current.getNextSortNo() == null) {
-            completed = true;
-            toStatus = STATUS_COMPLETED;
-            toSortNo = fromSortNo;
-            toStepId = current.getStepId();
-            lot.setStatus(STATUS_COMPLETED);
-            lot.setCurrentEqpId(null);
-            remark = "末站完工";
-        } else {
+        if (StringUtils.hasText(code)) {
+            // ----- 条件分支：resultCode == branch.condition_code -----
+            MesRouteEdge matched = outEdges.stream()
+                    .filter(e -> EDGE_BRANCH.equals(e.getEdgeType())
+                            && code.equalsIgnoreCase(e.getConditionCode()))
+                    .findFirst()
+                    .orElse(null);
+            AssertUtil.notNull(matched, "未配置分支条件: " + code);
             MesRouteStep next = mesRouteStepMapper.selectOne(new LambdaQueryWrapper<MesRouteStep>()
                     .eq(MesRouteStep::getVersionId, lot.getRouteVersionId())
-                    .eq(MesRouteStep::getSortNo, current.getNextSortNo())
+                    .eq(MesRouteStep::getSortNo, matched.getToSortNo())
                     .last("LIMIT 1"));
-            AssertUtil.notNull(next, "下一站不存在，路线数据异常");
-
+            AssertUtil.notNull(next, "分支目标站不存在");
             completed = false;
             toStatus = STATUS_WAIT;
             toSortNo = next.getSortNo();
             toStepId = next.getStepId();
             lot.setStatus(STATUS_WAIT);
-            lot.setCurrentSortNo(next.getSortNo());
-            lot.setCurrentStepId(next.getStepId());
+            lot.setCurrentSortNo(toSortNo);
+            lot.setCurrentStepId(toStepId);
             lot.setCurrentEqpId(null);
-            remark = "完工并进入下一站";
+            remark = "完工并分支进入下一站";
+            // 结构化履历，不拼进 remark
+            JSONObject ext = new JSONObject();
+            ext.set("resultCode", code);
+            ext.set("edgeType", EDGE_BRANCH);
+            ext.set("edgeId", String.valueOf(matched.getId()));
+            ext.set("toSortNo", toSortNo);
+            extJson = ext.toString();
+        } else {
+            // ----- 默认路径：normal 边优先，否则用步骤 next（兼容无边表的旧 Lot）-----
+            MesRouteEdge normal = outEdges.stream()
+                    .filter(e -> EDGE_NORMAL.equals(e.getEdgeType()))
+                    .findFirst()
+                    .orElse(null);
+            Integer nextSort = normal != null ? normal.getToSortNo() : current.getNextSortNo();
+            if (nextSort == null) {
+                // 无下一站 = 末站完工
+                completed = true;
+                toStatus = STATUS_COMPLETED;
+                toSortNo = fromSortNo;
+                toStepId = current.getStepId();
+                lot.setStatus(STATUS_COMPLETED);
+                lot.setCurrentEqpId(null);
+                remark = "末站完工";
+                if (normal != null) {
+                    JSONObject ext = new JSONObject();
+                    ext.set("edgeType", EDGE_NORMAL);
+                    ext.set("edgeId", String.valueOf(normal.getId()));
+                    extJson = ext.toString();
+                }
+            } else {
+                MesRouteStep next = mesRouteStepMapper.selectOne(new LambdaQueryWrapper<MesRouteStep>()
+                        .eq(MesRouteStep::getVersionId, lot.getRouteVersionId())
+                        .eq(MesRouteStep::getSortNo, nextSort)
+                        .last("LIMIT 1"));
+                AssertUtil.notNull(next, "下一站不存在，路线数据异常");
+                completed = false;
+                toStatus = STATUS_WAIT;
+                toSortNo = next.getSortNo();
+                toStepId = next.getStepId();
+                lot.setStatus(STATUS_WAIT);
+                lot.setCurrentSortNo(next.getSortNo());
+                lot.setCurrentStepId(next.getStepId());
+                lot.setCurrentEqpId(null);
+                remark = "完工并进入下一站";
+                JSONObject ext = new JSONObject();
+                ext.set("edgeType", EDGE_NORMAL);
+                if (normal != null) {
+                    ext.set("edgeId", String.valueOf(normal.getId()));
+                }
+                ext.set("toSortNo", toSortNo);
+                extJson = ext.toString();
+            }
         }
 
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
@@ -222,11 +290,15 @@ public class TrackServiceImpl implements TrackService {
         wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_TRACK_OUT, fromStatus, toStatus, fromSortNo, toSortNo,
-                toStepId, fromEqpId, lot.getRouteVersionId(), remark, null, null, null);
+                toStepId, fromEqpId, lot.getRouteVersionId(), remark, null, null, extJson);
 
         return toTxnVo(lot, TX_TRACK_OUT, completed);
     }
 
+    /**
+     * 回流：按快照 rework 边跳回前序站，按触发站累计次数，超限拒绝。
+     * 与 TrackOut 分支不同：独立事务 + track:rework 权限。
+     */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public TrackTxnResultVO rework(Long lotId, Integer toSortNo, String reasonCode, String remark) {
@@ -238,6 +310,7 @@ public class TrackServiceImpl implements TrackService {
         AssertUtil.notNull(toSortNo, "回流目标站不能为空");
 
         Integer fromSortNo = lot.getCurrentSortNo();
+        // 必须命中：当前站 → toSortNo 且 type=rework
         MesRouteEdge edge = mesRouteEdgeMapper.selectOne(new LambdaQueryWrapper<MesRouteEdge>()
                 .eq(MesRouteEdge::getVersionId, lot.getRouteVersionId())
                 .eq(MesRouteEdge::getFromSortNo, fromSortNo)
@@ -248,6 +321,7 @@ public class TrackServiceImpl implements TrackService {
         AssertUtil.notNull(edge.getMaxReworkCount(), "回流次数上限未配置");
         AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "回流次数上限异常");
 
+        // 边配了 reasonCodes 白名单则原因必填且命中
         String reason = reasonCode == null ? null : reasonCode.trim();
         if (StringUtils.hasText(edge.getReasonCodes())) {
             AssertUtil.notBlank(reason, "返工原因不能为空");
@@ -258,6 +332,7 @@ public class TrackServiceImpl implements TrackService {
             AssertUtil.isTrue(allowed.contains(reason), "返工原因不匹配");
         }
 
+        // 计数存在 Lot.rework_counts JSON：{"触发站sortNo": 次数}
         int used = getReworkCount(lot, fromSortNo);
         AssertUtil.isTrue(used + 1 <= edge.getMaxReworkCount(), "返工次数已达上限");
 
@@ -272,6 +347,7 @@ public class TrackServiceImpl implements TrackService {
         int newCount = used + 1;
         putReworkCount(lot, fromSortNo, newCount);
 
+        // 回流后回到 wait，清空机台，需重新 TrackIn
         lot.setStatus(STATUS_WAIT);
         lot.setCurrentSortNo(target.getSortNo());
         lot.setCurrentStepId(target.getStepId());
@@ -299,6 +375,7 @@ public class TrackServiceImpl implements TrackService {
         return vo;
     }
 
+    /** 现场台上下文：当前站 + 默认下一站 + 可选分支/回流列表 */
     @Override
     public TrackContextVO context(Long lotId) {
         MesLot lot = mesLotMapper.selectById(lotId);
@@ -317,6 +394,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setCanTrackIn(STATUS_WAIT.equals(lot.getStatus()));
         vo.setCanTrackOut(STATUS_PROCESSING.equals(lot.getStatus()));
         vo.setReworkOptions(Collections.emptyList());
+        vo.setBranchOptions(Collections.emptyList());
         vo.setCanRework(false);
         vo.setReworkCount(lot.getCurrentSortNo() != null ? getReworkCount(lot, lot.getCurrentSortNo()) : 0);
 
@@ -340,16 +418,62 @@ public class TrackServiceImpl implements TrackService {
         }
         vo.setCurrentStep(toStepVo(current));
 
-        if (current.getNextSortNo() != null) {
+        // 默认下一站：优先 normal 边，否则步骤 next
+        List<MesRouteEdge> outEdges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, lot.getRouteVersionId())
+                .eq(MesRouteEdge::getFromSortNo, lot.getCurrentSortNo())
+                .in(MesRouteEdge::getEdgeType, EDGE_NORMAL, EDGE_BRANCH)
+                .orderByAsc(MesRouteEdge::getSortNo));
+        MesRouteEdge normal = outEdges.stream()
+                .filter(e -> EDGE_NORMAL.equals(e.getEdgeType()))
+                .findFirst()
+                .orElse(null);
+        Integer nextSort = normal != null ? normal.getToSortNo() : current.getNextSortNo();
+        if (nextSort != null) {
             MesRouteStep next = mesRouteStepMapper.selectOne(new LambdaQueryWrapper<MesRouteStep>()
                     .eq(MesRouteStep::getVersionId, lot.getRouteVersionId())
-                    .eq(MesRouteStep::getSortNo, current.getNextSortNo())
+                    .eq(MesRouteStep::getSortNo, nextSort)
                     .last("LIMIT 1"));
             if (next != null) {
                 vo.setNextStep(toStepVo(next));
             }
         }
 
+        // 分支选项：供现场台 TrackOut 选 resultCode
+        List<MesRouteEdge> branchEdges = outEdges.stream()
+                .filter(e -> EDGE_BRANCH.equals(e.getEdgeType()))
+                .toList();
+        if (!branchEdges.isEmpty()) {
+            Set<Integer> toSorts = branchEdges.stream().map(MesRouteEdge::getToSortNo).collect(Collectors.toSet());
+            Map<Integer, MesRouteStep> stepBySort = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                            .eq(MesRouteStep::getVersionId, lot.getRouteVersionId())
+                            .in(MesRouteStep::getSortNo, toSorts))
+                    .stream()
+                    .collect(Collectors.toMap(MesRouteStep::getSortNo, s -> s, (a, b) -> a));
+            Set<Long> stepIds = stepBySort.values().stream().map(MesRouteStep::getStepId).collect(Collectors.toSet());
+            Map<Long, MesStep> stepMap = stepIds.isEmpty()
+                    ? Collections.emptyMap()
+                    : mesStepMapper.selectBatchIds(stepIds).stream()
+                    .collect(Collectors.toMap(MesStep::getId, s -> s, (a, b) -> a));
+            List<TrackBranchOptionVO> branchOptions = new ArrayList<>();
+            for (MesRouteEdge edge : branchEdges) {
+                TrackBranchOptionVO opt = new TrackBranchOptionVO();
+                opt.setConditionCode(edge.getConditionCode());
+                opt.setToSortNo(edge.getToSortNo());
+                MesRouteStep target = stepBySort.get(edge.getToSortNo());
+                if (target != null) {
+                    MesStep step = stepMap.get(target.getStepId());
+                    if (step != null) {
+                        opt.setToStepCode(step.getStepCode());
+                        opt.setToStepName(step.getStepName());
+                    }
+                }
+                branchOptions.add(opt);
+            }
+            vo.setBranchOptions(branchOptions);
+        }
+
+        // 回流选项：剩余次数 > 0 才展示；canRework 还要权限
         List<MesRouteEdge> reworkEdges = mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
                 .eq(MesRouteEdge::getVersionId, lot.getRouteVersionId())
                 .eq(MesRouteEdge::getFromSortNo, lot.getCurrentSortNo())
@@ -404,9 +528,7 @@ public class TrackServiceImpl implements TrackService {
         return vo;
     }
 
-    /*
-     * 获取返工次数
-     */
+    /** 读 Lot.rework_counts 里当前触发站已用次数 */
     private int getReworkCount(MesLot lot, Integer fromSortNo) {
         if (fromSortNo == null || !StringUtils.hasText(lot.getReworkCounts())) {
             return 0;
@@ -419,9 +541,7 @@ public class TrackServiceImpl implements TrackService {
         }
     }
 
-    /*
-     * 设置返工次数
-     */
+    /** 回写触发站返工次数到 Lot.rework_counts */
     private void putReworkCount(MesLot lot, Integer fromSortNo, int count) {
         JSONObject obj;
         if (StringUtils.hasText(lot.getReworkCounts())) {
@@ -536,7 +656,7 @@ public class TrackServiceImpl implements TrackService {
         return vo;
     }
 
-    /** 写入 Track 事务履历，返回履历 ID */
+    /** 写履历；extJson 放分支/回流结构化字段，remark 只留人工备注 */
     private Long writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus,
                             Integer fromSortNo, Integer toSortNo, Long stepId, Long eqpId,
                             Long routeVersionId, String remark, Long recipeId, Long recipeVersionId,

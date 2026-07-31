@@ -20,7 +20,7 @@ public interface TrackService {
      * 完工：processing → 下一站 wait，或末站 completed。
      * 一期不单独暴露 Move，由本事务自动推进站点。
      */
-    TrackTxnResultVO trackOut(Long lotId);
+    TrackTxnResultVO trackOut(Long lotId, String resultCode);
 
     /** 返工回流：wait|processing → wait(目标站) */
     TrackTxnResultVO rework(Long lotId, Integer toSortNo, String reasonCode, String remark);

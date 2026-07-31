@@ -9,4 +9,7 @@ public class TrackOutDTO {
 
     @NotNull(message = "批次ID不能为空")
     private Long lotId;
+
+    /** 分支结果码；空则走 default/normal */
+    private String resultCode;
 }

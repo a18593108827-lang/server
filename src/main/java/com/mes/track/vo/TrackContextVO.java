@@ -24,5 +24,6 @@ public class TrackContextVO {
     private Boolean canRework;
     private Integer reworkCount;
     private List<TrackReworkOptionVO> reworkOptions;
+    private List<TrackBranchOptionVO> branchOptions;
     private Boolean completed;
 }

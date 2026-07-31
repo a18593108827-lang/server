@@ -10,5 +10,6 @@ public class MesRouteEdgeVO {
     private String edgeType;
     private Integer maxReworkCount;
     private String reasonCodes;
+    private String conditionCode;
     private Integer sortNo;
 }
