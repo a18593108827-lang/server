@@ -317,15 +317,16 @@ public class TrackServiceImpl implements TrackService {
     }
 
     /**
-     * 前向跳站：命中 skip_allow 边，中间站记入履历，落到目标 wait。
+     * 前向跳站：仅 wait（未开工）可跳；命中 skip_allow，中间站记履历，落到目标 wait。
+     * processing 须先 TrackOut（后置可加 Abort）。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public TrackTxnResultVO skip(Long lotId, Integer toSortNo, String reasonCode, String remark) {
         MesLot lot = requireExecutableLot(lotId);
-        holdService.assertNoActive(lotId);// 检查是否存在锁批
-        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus()),
-                "仅等待或加工中状态可跳站");
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()),
+                "仅等待状态可跳站，加工中请先完工");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法跳站");
         AssertUtil.notNull(toSortNo, "跳站目标站不能为空");
 
@@ -529,8 +530,9 @@ public class TrackServiceImpl implements TrackService {
                 skipOptions.add(opt);
             }
             vo.setSkipOptions(skipOptions);
-            boolean statusOk = STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus());
-            vo.setCanSkip(statusOk && !skipOptions.isEmpty() && StpUtil.hasPermission("track:skip"));
+            vo.setCanSkip(STATUS_WAIT.equals(lot.getStatus())
+                    && !skipOptions.isEmpty()
+                    && StpUtil.hasPermission("track:skip"));
         }
         return vo;
     }
