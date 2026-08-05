@@ -5,6 +5,8 @@ import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.common.AssertUtil;
 import com.mes.dispatch.service.DispatchService;
+import com.mes.equipment.entity.MesEqp;
+import com.mes.equipment.mapper.MesEqpMapper;
 import com.mes.equipment.service.MesEqpService;
 import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
@@ -24,6 +26,7 @@ import com.mes.route.mapper.MesStepMapper;
 import com.mes.route.support.RouteEdgeResolver;
 import com.mes.route.support.RouteEdgeTypes;
 import com.mes.route.support.RouteTrackOutDecision;
+import com.mes.route.support.StepEqpTypeGuard;
 import com.mes.system.entity.SysUser;
 import com.mes.system.mapper.SysUserMapper;
 import com.mes.track.entity.MesTxLog;
@@ -80,10 +83,12 @@ public class TrackServiceImpl implements TrackService {
     private final WipProjectionService wipProjectionService;
     private final HoldService holdService;
     private final MesEqpService mesEqpService;
+    private final MesEqpMapper mesEqpMapper;
     private final DispatchService dispatchService;
     private final RecipeFacade recipeFacade;
     private final RouteEdgeResolver routeEdgeResolver;
     private final ReworkCountStore reworkCountStore;
+    private final StepEqpTypeGuard stepEqpTypeGuard;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -152,6 +157,7 @@ public class TrackServiceImpl implements TrackService {
         AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
 
         MesRouteStep current = requireCurrentStep(lot);
+        stepEqpTypeGuard.requireMatch(lot, eqpId);// 设备类型必须匹配
         recipeFacade.assertQualified(current.getStepId(), eqpId);
         RecipeResolveVO recipe = recipeFacade.resolve(current.getStepId(), eqpId);
         String fromStatus = lot.getStatus();
@@ -167,10 +173,29 @@ public class TrackServiceImpl implements TrackService {
         Long txId = writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
                 current.getStepId(), eqpId, lot.getRouteVersionId(), "开工",
                 recipe != null ? recipe.getRecipeId() : null,
-                recipe != null ? recipe.getVersionId() : null, null);
-        dispatchService.consumeOnTrackIn(lotId, eqpId, txId);// 消费预约
+                recipe != null ? recipe.getVersionId() : null, buildTrackInExt(lot, eqpId));
+        dispatchService.consumeOnTrackIn(lotId, eqpId, txId);// 消耗预约
 
         return toTxnVo(lot, TX_TRACK_IN, false);
+    }
+
+    /**
+     * 构建 TrackIn 扩展信息
+     */
+    private String buildTrackInExt(MesLot lot, Long eqpId) {
+        JSONObject ext = new JSONObject();
+        String required = stepEqpTypeGuard.resolveRequired(lot);
+        if (StringUtils.hasText(required)) {
+            ext.set("eqpTypeRequired", required);
+        }
+        MesEqp eqp = mesEqpMapper.selectById(eqpId);
+        if (eqp != null && StringUtils.hasText(eqp.getEqpType())) {
+            ext.set("eqpTypeActual", eqp.getEqpType().trim());
+        }
+        if (eqpId != null) {
+            ext.set("eqpId", String.valueOf(eqpId));
+        }
+        return ext.isEmpty() ? null : ext.toString();
     }
 
     /**
@@ -470,10 +495,18 @@ public class TrackServiceImpl implements TrackService {
         stepVo.setStepId(row.getStepId());
         stepVo.setSortNo(row.getSortNo());
         stepVo.setNextSortNo(row.getNextSortNo());
+        stepVo.setEqpType(row.getEqpType());
+        stepVo.setStepType(row.getStepType());
         MesStep step = mesStepMapper.selectById(row.getStepId());
         if (step != null) {
             stepVo.setStepCode(step.getStepCode());
             stepVo.setStepName(step.getStepName());
+            if (!StringUtils.hasText(stepVo.getEqpType())) {
+                stepVo.setEqpType(step.getEqpType());
+            }
+            if (stepVo.getStepType() == null) {
+                stepVo.setStepType(step.getStepType());
+            }
         }
         return stepVo;
     }

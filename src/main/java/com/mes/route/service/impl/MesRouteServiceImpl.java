@@ -21,6 +21,7 @@ import com.mes.route.mapper.MesRouteStepMapper;
 import com.mes.route.mapper.MesRouteVersionMapper;
 import com.mes.route.mapper.MesStepMapper;
 import com.mes.route.service.MesRouteService;
+import com.mes.route.support.StepEqpTypeGuard;
 import com.mes.route.vo.MesRouteEdgeVO;
 import com.mes.route.vo.MesRouteStepVO;
 import com.mes.route.vo.MesRouteVO;
@@ -68,6 +69,7 @@ public class MesRouteServiceImpl implements MesRouteService {
     private final MesRouteStepMapper mesRouteStepMapper;
     private final MesRouteEdgeMapper mesRouteEdgeMapper;
     private final MesStepMapper mesStepMapper;
+    private final StepEqpTypeGuard stepEqpTypeGuard;
 
     @Override
     public PageResult<MesRouteVO> page(MesRouteQuery query) {
@@ -204,11 +206,27 @@ public class MesRouteServiceImpl implements MesRouteService {
             svo.setStepId(rs.getStepId());
             svo.setSortNo(rs.getSortNo());
             svo.setNextSortNo(rs.getNextSortNo());
+            // 站属性：优先快照，旧数据回退主数据
+            svo.setEqpType(rs.getEqpType());
+            svo.setStepType(rs.getStepType());
+            svo.setAllowSkip(rs.getAllowSkip());
+            svo.setMaxQueueMin(rs.getMaxQueueMin());
             MesStep step = stepMap.get(rs.getStepId());
             if (step != null) {
                 svo.setStepCode(step.getStepCode());
                 svo.setStepName(step.getStepName());
-                svo.setStepType(step.getStepType());
+                if (svo.getStepType() == null) {
+                    svo.setStepType(step.getStepType());
+                }
+                if (!StringUtils.hasText(svo.getEqpType())) {
+                    svo.setEqpType(step.getEqpType());
+                }
+                if (svo.getAllowSkip() == null) {
+                    svo.setAllowSkip(step.getAllowSkip());
+                }
+                if (svo.getMaxQueueMin() == null) {
+                    svo.setMaxQueueMin(step.getMaxQueueMin());
+                }
             }
             stepVos.add(svo);
         }
@@ -230,12 +248,14 @@ public class MesRouteServiceImpl implements MesRouteService {
         // 物理删除：逻辑删除会占住 uk_ver_sort(version_id, sort_no)
         mesRouteStepMapper.physicalDeleteByVersionId(versionId);
 
+        Map<Long, MesStep> stepMap = loadStepMap(items.stream().map(MesRouteStepsSaveDTO.Item::getStepId).toList());
         for (MesRouteStepsSaveDTO.Item item : items) {
             MesRouteStep row = new MesRouteStep();
             row.setVersionId(versionId);
             row.setStepId(item.getStepId());
             row.setSortNo(item.getSortNo());
             row.setNextSortNo(item.getNextSortNo());
+            copyAttrsFromMaster(row, stepMap.get(item.getStepId()));// 站属性：优先快照，旧数据回退主数据
             mesRouteStepMapper.insert(row);
         }
 
@@ -277,6 +297,13 @@ public class MesRouteServiceImpl implements MesRouteService {
                 .orderByAsc(MesRouteStep::getSortNo));
         AssertUtil.notEmpty(steps, "至少配置一个步骤才能发布");
         validatePersistedSteps(steps);
+
+        // 发布前按主数据刷新站属性快照
+        refreshStepAttrsFromMaster(steps);
+        steps = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                .eq(MesRouteStep::getVersionId, versionId)
+                .orderByAsc(MesRouteStep::getSortNo));
+        stepEqpTypeGuard.assertPublishable(steps);
 
         // 发布瞬间再刷一遍 normal：旧草稿可能只有 rework、缺默认边，否则校验过不了
         mesRouteEdgeMapper.physicalDeleteNormalByVersionId(versionId);
@@ -354,6 +381,10 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setStepId(src.getStepId());
             row.setSortNo(src.getSortNo());
             row.setNextSortNo(src.getNextSortNo());
+            row.setEqpType(src.getEqpType());
+            row.setStepType(src.getStepType());
+            row.setAllowSkip(src.getAllowSkip());
+            row.setMaxQueueMin(src.getMaxQueueMin());
             mesRouteStepMapper.insert(row);
         }
 
@@ -580,6 +611,40 @@ public class MesRouteServiceImpl implements MesRouteService {
             AssertUtil.isTrue(reachedEnd,
                     "回流后无法到达主路径终点: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
         }
+    }
+
+    /** 从主数据拷贝站属性到路线步骤快照 */
+    private static void copyAttrsFromMaster(MesRouteStep row, MesStep master) {
+        if (master == null) {
+            return;
+        }
+        row.setEqpType(blankToNull(master.getEqpType()));
+        row.setStepType(master.getStepType());
+        row.setAllowSkip(master.getAllowSkip());
+        row.setMaxQueueMin(master.getMaxQueueMin());
+    }
+
+    private void refreshStepAttrsFromMaster(List<MesRouteStep> steps) {
+        Map<Long, MesStep> stepMap = loadStepMap(steps.stream().map(MesRouteStep::getStepId).toList());
+        for (MesRouteStep row : steps) {
+            MesStep master = stepMap.get(row.getStepId());
+            AssertUtil.notNull(master, "工序不存在: " + row.getStepId());
+            copyAttrsFromMaster(row, master);
+            mesRouteStepMapper.updateById(row);
+        }
+    }
+
+    /** 批量加载工序主数据 */
+    private Map<Long, MesStep> loadStepMap(List<Long> stepIds) {
+        if (stepIds == null || stepIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<Long> ids = stepIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        return mesStepMapper.selectBatchIds(ids).stream()
+                .collect(Collectors.toMap(MesStep::getId, s -> s, (a, b) -> a));
     }
 
     /** 校验保存入参：顺序号唯一、下一站合法、工序存在且启用 */

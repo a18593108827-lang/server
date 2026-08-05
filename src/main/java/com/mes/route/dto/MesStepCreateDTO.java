@@ -18,8 +18,8 @@ public class MesStepCreateDTO {
     @NotNull(message = "工序类型不能为空")
     private Integer stepType;
 
-    /** 设备类型（预留） */
     private String eqpType;
-
+    private Integer allowSkip;
+    private Integer maxQueueMin;
     private String remark;
 }

@@ -30,4 +30,16 @@ public class MesRouteStep extends BaseEntity {
 
     /** 下一站顺序号；空表示结束 */
     private Integer nextSortNo;
+
+    /** 快照设备类型（发布固化） */
+    private String eqpType;
+
+    /** 快照工序类型 */
+    private Integer stepType;
+
+    /** 快照 Skip 许可 */
+    private Integer allowSkip;
+
+    /** 快照 QueueTime */
+    private Integer maxQueueMin;
 }

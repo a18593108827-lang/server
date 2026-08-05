@@ -36,3 +36,6 @@ mes:
   recipe:
     # true=TrackIn 强制要求配方绑定解析成功；默认 false
     require-binding: false
+  step:
+    # off=不校验 | soft=有类型才校验 | force=加工站必须有类型且强制匹配
+    eqp-type-mode: soft

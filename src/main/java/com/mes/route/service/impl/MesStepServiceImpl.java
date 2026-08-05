@@ -64,6 +64,8 @@ public class MesStepServiceImpl implements MesStepService {
         step.setStepName(dto.getStepName().trim());
         step.setStepType(dto.getStepType());
         step.setEqpType(blankToNull(dto.getEqpType()));
+        step.setAllowSkip(dto.getAllowSkip());
+        step.setMaxQueueMin(dto.getMaxQueueMin());
         step.setRemark(blankToNull(dto.getRemark()));
         step.setStatus(1);
         mesStepMapper.insert(step);
@@ -80,6 +82,8 @@ public class MesStepServiceImpl implements MesStepService {
         step.setStepType(dto.getStepType());
         step.setStatus(dto.getStatus());
         step.setEqpType(blankToNull(dto.getEqpType()));
+        step.setAllowSkip(dto.getAllowSkip());
+        step.setMaxQueueMin(dto.getMaxQueueMin());
         step.setRemark(blankToNull(dto.getRemark()));
         mesStepMapper.updateById(step);
     }
@@ -103,6 +107,8 @@ public class MesStepServiceImpl implements MesStepService {
         vo.setStepName(step.getStepName());
         vo.setStepType(step.getStepType());
         vo.setEqpType(step.getEqpType());
+        vo.setAllowSkip(step.getAllowSkip());
+        vo.setMaxQueueMin(step.getMaxQueueMin());
         vo.setStatus(step.getStatus());
         vo.setRemark(step.getRemark());
         vo.setCreateTime(step.getCreateTime());

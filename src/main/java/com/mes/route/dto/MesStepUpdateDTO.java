@@ -20,5 +20,7 @@ public class MesStepUpdateDTO {
     private Integer status;
 
     private String eqpType;
+    private Integer allowSkip;
+    private Integer maxQueueMin;
     private String remark;
 }

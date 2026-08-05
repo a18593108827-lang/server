@@ -28,8 +28,14 @@ public class MesStep extends BaseEntity {
     /** 类型：1加工 2量测 3其它 */
     private Integer stepType;
 
-    /** 设备类型（预留） */
+    /** 设备类型 */
     private String eqpType;
+
+    /** 1允许Skip 0禁止 空=跟随全局（P1） */
+    private Integer allowSkip;
+
+    /** 站间最大等待分钟（P1） */
+    private Integer maxQueueMin;
 
     /** 状态：1正常 0禁用 */
     private Integer status;

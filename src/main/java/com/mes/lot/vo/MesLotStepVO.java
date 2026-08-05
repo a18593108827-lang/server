@@ -12,4 +12,6 @@ public class MesLotStepVO {
     private Integer sortNo;
     /** 下一站顺序号，空表示结束 */
     private Integer nextSortNo;
+    private String eqpType;
+    private Integer stepType;
 }

@@ -20,8 +20,7 @@ import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.recipe.facade.RecipeFacade;
-import com.mes.route.entity.MesStep;
-import com.mes.route.mapper.MesStepMapper;
+import com.mes.route.support.StepEqpTypeGuard;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
@@ -53,12 +52,12 @@ public class DispatchServiceImpl implements DispatchService {
     private static final Set<String> RESERVE_LOT_STATUSES = Set.of("wait", "processing");
 
     private final MesLotMapper mesLotMapper;
-    private final MesStepMapper mesStepMapper;
     private final MesEqpMapper mesEqpMapper;
     private final MesDispatchReserveMapper mesDispatchReserveMapper;
     private final HoldService holdService;
     private final MesEqpService mesEqpService;
     private final RecipeFacade recipeFacade;
+    private final StepEqpTypeGuard stepEqpTypeGuard;
 
     /** 预约超时分钟数，默认 30 */
     @Value("${mes.dispatch.reserve-ttl-minutes:30}")
@@ -75,7 +74,7 @@ public class DispatchServiceImpl implements DispatchService {
         vo.setLotNo(lot.getLotNo());
         vo.setLotStatus(lot.getStatus());
 
-        String eqpType = resolveEqpType(lot);
+        String eqpType = stepEqpTypeGuard.resolveRequired(lot);
         vo.setEqpType(eqpType);
 
         if (holdService.hasActive(lotId)) {
@@ -163,11 +162,7 @@ public class DispatchServiceImpl implements DispatchService {
         mesEqpService.assertUsable(dto.getEqpId());
         MesEqp eqp = mesEqpMapper.selectById(dto.getEqpId());
         AssertUtil.notNull(eqp, "设备不存在");
-
-        String eqpType = resolveEqpType(lot);
-        if (StringUtils.hasText(eqpType)) {
-            AssertUtil.isTrue(eqpType.equals(eqp.getEqpType()), "设备类型与当前站不匹配");
-        }
+        stepEqpTypeGuard.requireMatch(lot, dto.getEqpId());
 
         // 检查预约是否过期（写路径加行锁）
         MesDispatchReserve mine = activeOrNull(findActiveByLot(lot.getId(), true));
@@ -280,17 +275,6 @@ public class DispatchServiceImpl implements DispatchService {
             return;
         }
         leaveActive(active, RESERVE_CONSUMED, null, txLogId);
-    }
-
-    private String resolveEqpType(MesLot lot) {
-        if (lot.getCurrentStepId() == null) {
-            return null;
-        }
-        MesStep step = mesStepMapper.selectById(lot.getCurrentStepId());
-        if (step != null && StringUtils.hasText(step.getEqpType())) {
-            return step.getEqpType().trim();
-        }
-        return null;
     }
 
     // 获取当前批次的 active 预约；forUpdate=true 时行锁（须在事务内）

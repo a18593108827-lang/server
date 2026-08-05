@@ -13,6 +13,8 @@ public class MesStepVO {
     /** 类型：1加工 2量测 3其它 */
     private Integer stepType;
     private String eqpType;
+    private Integer allowSkip;
+    private Integer maxQueueMin;
     /** 状态：1正常 0禁用 */
     private Integer status;
     private String remark;
