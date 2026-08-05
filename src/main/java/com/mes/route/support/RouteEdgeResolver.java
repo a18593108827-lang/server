@@ -12,10 +12,15 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -54,6 +59,81 @@ public class RouteEdgeResolver {
                 .last("LIMIT 1"));
     }
 
+    /**
+     * 获取skip边数组
+     */
+    public List<MesRouteEdge> listSkip(Long versionId, Integer fromSortNo) {
+        return mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, versionId)
+                .eq(MesRouteEdge::getFromSortNo, fromSortNo)
+                .eq(MesRouteEdge::getEdgeType, RouteEdgeTypes.SKIP_ALLOW)
+                .orderByAsc(MesRouteEdge::getSortNo));
+    }
+
+    /**
+     * 获取skip边
+     */
+    public MesRouteEdge findSkip(Long versionId, Integer fromSortNo, Integer toSortNo) {
+        return mesRouteEdgeMapper.selectOne(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, versionId)
+                .eq(MesRouteEdge::getFromSortNo, fromSortNo)
+                .eq(MesRouteEdge::getToSortNo, toSortNo)
+                .eq(MesRouteEdge::getEdgeType, RouteEdgeTypes.SKIP_ALLOW)
+                .last("LIMIT 1"));
+    }
+
+    /**
+     * 主路径 from→to 开区间内的站序；不可达返回 null。
+     */
+    public List<Integer> computeSkippedSortNos(Long versionId, Integer fromSortNo, Integer toSortNo) {
+        if (versionId == null || fromSortNo == null || toSortNo == null
+                || Objects.equals(fromSortNo, toSortNo)) {
+            return null;
+        }
+        List<MesRouteStep> steps = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                .eq(MesRouteStep::getVersionId, versionId));
+        Map<Integer, Integer> nextMap = new HashMap<>();
+        for (MesRouteStep step : steps) {
+            nextMap.put(step.getSortNo(), step.getNextSortNo());
+        }
+        List<Integer> skipped = new ArrayList<>();
+        Set<Integer> visited = new HashSet<>();
+        Integer cur = nextMap.get(fromSortNo);
+        while (cur != null) {
+            if (!visited.add(cur)) {
+                return null;
+            }
+            if (Objects.equals(cur, toSortNo)) {
+                return skipped;
+            }
+            skipped.add(cur);
+            cur = nextMap.get(cur);
+        }
+        return null;
+    }
+
+    /** 路径上 from、to、中间站 allow_skip 均为 1 */
+    public Integer findDisallowedSkipSort(Long versionId, Integer fromSortNo, Integer toSortNo,
+                                          List<Integer> skippedSortNos) {
+        Set<Integer> need = new HashSet<>();
+        need.add(fromSortNo);
+        need.add(toSortNo);
+        if (skippedSortNos != null) {
+            need.addAll(skippedSortNos);
+        }
+        Map<Integer, MesRouteStep> map = mapRouteStepsBySort(versionId, need);
+        for (Integer sortNo : need) {
+            MesRouteStep step = map.get(sortNo);
+            if (step == null || !Integer.valueOf(1).equals(step.getAllowSkip())) {
+                return sortNo;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 获取指定站序的站点信息
+     */
     public MesRouteStep findStep(Long versionId, Integer sortNo) {
         if (versionId == null || sortNo == null) {
             return null;

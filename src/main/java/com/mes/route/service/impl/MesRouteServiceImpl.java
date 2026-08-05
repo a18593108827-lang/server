@@ -63,6 +63,8 @@ public class MesRouteServiceImpl implements MesRouteService {
     public static final String EDGE_NORMAL = com.mes.route.support.RouteEdgeTypes.NORMAL;
     /** 条件分支边：TrackOut 带 resultCode 时按 condition_code 匹配 */
     public static final String EDGE_BRANCH = com.mes.route.support.RouteEdgeTypes.BRANCH;
+    /** 跳站白名单边：Track 走 /track/skip */
+    public static final String EDGE_SKIP_ALLOW = com.mes.route.support.RouteEdgeTypes.SKIP_ALLOW;
 
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
@@ -327,6 +329,7 @@ public class MesRouteServiceImpl implements MesRouteService {
         validatePersistedEdges(edges, sortNos);
         validateNormalAndBranchRules(steps, edges); // 每站 1 条 normal、branch 条件不重复
         validateReworkCanReachMainEnd(steps, edges); // 回流目标沿 next 必须能走到终点
+        validateSkipAllowRules(steps, edges); // 跳站前向可达 + allow_skip
 
         // 旧版进行归档处理（修改状态）
         mesRouteVersionMapper.update(null, new LambdaUpdateWrapper<MesRouteVersion>()
@@ -496,7 +499,8 @@ public class MesRouteServiceImpl implements MesRouteService {
             AssertUtil.notNull(edge.getToSortNo(), "边终点不能为空");
             AssertUtil.notBlank(edge.getEdgeType(), "边类型不能为空");
             String type = edge.getEdgeType().trim().toLowerCase();
-            AssertUtil.isTrue(EDGE_BRANCH.equals(type) || EDGE_REWORK.equals(type) || EDGE_NORMAL.equals(type),
+            AssertUtil.isTrue(EDGE_BRANCH.equals(type) || EDGE_REWORK.equals(type)
+                            || EDGE_NORMAL.equals(type) || EDGE_SKIP_ALLOW.equals(type),
                     "不支持的边类型: " + type);
             AssertUtil.isTrue(sortNos.contains(edge.getFromSortNo()),
                     "边起点顺序号不存在: " + edge.getFromSortNo());
@@ -516,6 +520,10 @@ public class MesRouteServiceImpl implements MesRouteService {
                 String cond = edge.getConditionCode().trim().toUpperCase();
                 String ck = edge.getFromSortNo() + "-" + cond;
                 AssertUtil.isTrue(branchConds.add(ck), "同站分支条件码重复: " + cond);
+            }
+            if (EDGE_SKIP_ALLOW.equals(type)) {
+                AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "跳站边不能配置条件码");
+                AssertUtil.isTrue(edge.getMaxReworkCount() == null, "跳站边不能配置回流次数");
             }
             if (EDGE_NORMAL.equals(type)) {
                 AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "默认边不能配置条件码");
@@ -540,6 +548,10 @@ public class MesRouteServiceImpl implements MesRouteService {
                 AssertUtil.notBlank(edge.getConditionCode(), "分支边须配置条件码");
                 AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
                         "分支边不能指向自身");
+            }
+            if (EDGE_SKIP_ALLOW.equals(edge.getEdgeType())) {
+                AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
+                        "跳站边不能指向自身");
             }
         }
     }
@@ -610,6 +622,56 @@ public class MesRouteServiceImpl implements MesRouteService {
             }
             AssertUtil.isTrue(reachedEnd,
                     "回流后无法到达主路径终点: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
+        }
+    }
+
+    /**
+     * 跳站边：from 沿 next 前向可达 to；from/to/中间站 allow_skip=1；同站目标不重复。
+     */
+    private void validateSkipAllowRules(List<MesRouteStep> steps, List<MesRouteEdge> edges) {
+        Map<Integer, MesRouteStep> stepBySort = steps.stream()
+                .collect(Collectors.toMap(MesRouteStep::getSortNo, s -> s, (a, b) -> a));
+        // next 可为 null（终点），Collectors.toMap 不允许 null value
+        Map<Integer, Integer> nextMap = new HashMap<>();
+        for (MesRouteStep step : steps) {
+            nextMap.put(step.getSortNo(), step.getNextSortNo());
+        }
+        Set<String> skipTargets = new HashSet<>();
+        for (MesRouteEdge edge : edges) {
+            if (!EDGE_SKIP_ALLOW.equals(edge.getEdgeType())) {
+                continue;
+            }
+            String tk = edge.getFromSortNo() + "-" + edge.getToSortNo();
+            AssertUtil.isTrue(skipTargets.add(tk),
+                    "同站跳站目标重复: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
+
+            List<Integer> skipped = new ArrayList<>();
+            Set<Integer> visited = new HashSet<>();
+            Integer cur = nextMap.get(edge.getFromSortNo());
+            boolean reached = false;
+            while (cur != null) {
+                AssertUtil.isTrue(visited.add(cur),
+                        "跳站路径主路径成环: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
+                if (Objects.equals(cur, edge.getToSortNo())) {
+                    reached = true;
+                    break;
+                }
+                skipped.add(cur);
+                cur = nextMap.get(cur);
+            }
+            AssertUtil.isTrue(reached,
+                    "跳站目标不可沿主路径前向到达: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
+
+            Set<Integer> need = new HashSet<>();
+            need.add(edge.getFromSortNo());
+            need.add(edge.getToSortNo());
+            need.addAll(skipped);
+            for (Integer sortNo : need) {
+                MesRouteStep step = stepBySort.get(sortNo);
+                AssertUtil.notNull(step, "跳站路径站不存在: " + sortNo);
+                AssertUtil.isTrue(Integer.valueOf(1).equals(step.getAllowSkip()),
+                        "跳站路径含不可跳站: sortNo=" + sortNo);
+            }
         }
     }
 

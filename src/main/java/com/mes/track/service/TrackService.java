@@ -25,6 +25,9 @@ public interface TrackService {
     /** 返工回流：wait|processing → wait(目标站) */
     TrackTxnResultVO rework(Long lotId, Integer toSortNo, String reasonCode, String remark);
 
+    /** 前向跳站：wait|processing → wait(目标站) */
+    TrackTxnResultVO skip(Long lotId, Integer toSortNo, String reasonCode, String remark);
+
     /** 执行上下文：当前站 / 下一站 / 可操作标记 */
     TrackContextVO context(Long lotId);
 

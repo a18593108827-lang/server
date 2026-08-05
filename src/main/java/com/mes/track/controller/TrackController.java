@@ -8,6 +8,7 @@ import com.mes.track.dto.TrackInDTO;
 import com.mes.track.dto.TrackOutDTO;
 import com.mes.track.dto.TrackReleaseDTO;
 import com.mes.track.dto.TrackReworkDTO;
+import com.mes.track.dto.TrackSkipDTO;
 import com.mes.track.service.TrackService;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackReleaseResultVO;
@@ -62,6 +63,14 @@ public class TrackController {
     @PostMapping("/rework")
     public R<TrackTxnResultVO> rework(@Valid @RequestBody TrackReworkDTO dto) {
         return R.ok(trackService.rework(dto.getLotId(), dto.getToSortNo(), dto.getReasonCode(), dto.getRemark()));
+    }
+
+    /** 前向跳站 */
+    @SaCheckPermission("track:skip")
+    @OperLog(module = "Track", action = "Skip")
+    @PostMapping("/skip")
+    public R<TrackTxnResultVO> skip(@Valid @RequestBody TrackSkipDTO dto) {
+        return R.ok(trackService.skip(dto.getLotId(), dto.getToSortNo(), dto.getReasonCode(), dto.getRemark()));
     }
 
     /** 执行上下文（只读） */

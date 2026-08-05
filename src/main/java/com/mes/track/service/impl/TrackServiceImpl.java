@@ -38,6 +38,7 @@ import com.mes.track.vo.TrackBranchOptionVO;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackReleaseResultVO;
 import com.mes.track.vo.TrackReworkOptionVO;
+import com.mes.track.vo.TrackSkipOptionVO;
 import com.mes.track.vo.TrackTxnResultVO;
 import com.mes.wip.service.WipProjectionService;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +73,7 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_TRACK_IN = "TRACK_IN";
     public static final String TX_TRACK_OUT = "TRACK_OUT";
     public static final String TX_REWORK = "REWORK";
+    public static final String TX_SKIP = "SKIP";
 
     private final MesLotMapper mesLotMapper;
     private final MesRouteMapper mesRouteMapper;
@@ -314,7 +316,73 @@ public class TrackServiceImpl implements TrackService {
         return vo;
     }
 
-    /** 现场台上下文：当前站 + 默认下一站 + 可选分支/回流列表 */
+    /**
+     * 前向跳站：命中 skip_allow 边，中间站记入履历，落到目标 wait。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackTxnResultVO skip(Long lotId, Integer toSortNo, String reasonCode, String remark) {
+        MesLot lot = requireExecutableLot(lotId);
+        holdService.assertNoActive(lotId);// 检查是否存在锁批
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus()),
+                "仅等待或加工中状态可跳站");
+        AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法跳站");
+        AssertUtil.notNull(toSortNo, "跳站目标站不能为空");
+
+        Integer fromSortNo = lot.getCurrentSortNo();
+        MesRouteEdge edge = routeEdgeResolver.findSkip(lot.getRouteVersionId(), fromSortNo, toSortNo);
+        AssertUtil.notNull(edge, "当前站未配置跳至目标站");
+        // 获取跳站目标站可跳过的中间站
+        List<Integer> skipped = routeEdgeResolver.computeSkippedSortNos(
+                lot.getRouteVersionId(), fromSortNo, toSortNo);
+        AssertUtil.notNull(skipped, "跳站目标不可沿主路径前向到达");
+        // 获取跳站目标站不可跳过的中间站
+        Integer bad = routeEdgeResolver.findDisallowedSkipSort(
+                lot.getRouteVersionId(), fromSortNo, toSortNo, skipped);
+        AssertUtil.isTrue(bad == null, "跳站路径含不可跳站: sortNo=" + bad);
+
+        String reason = reasonCode == null ? null : reasonCode.trim();
+        if (StringUtils.hasText(edge.getReasonCodes())) {
+            AssertUtil.notBlank(reason, "跳站原因不能为空");
+            Set<String> allowed = Arrays.stream(edge.getReasonCodes().split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::hasText)
+                    .collect(Collectors.toSet());
+            AssertUtil.isTrue(allowed.contains(reason), "跳站原因不匹配");
+        }
+
+        MesRouteStep target = routeEdgeResolver.findStep(lot.getRouteVersionId(), toSortNo);
+        AssertUtil.notNull(target, "跳站目标站不存在");
+
+        String fromStatus = lot.getStatus();
+        Long fromEqpId = lot.getCurrentEqpId();
+        lot.setStatus(STATUS_WAIT);
+        lot.setCurrentSortNo(target.getSortNo());
+        lot.setCurrentStepId(target.getStepId());
+        lot.setCurrentEqpId(null);
+        lot.setUpdateBy(StpUtil.getLoginIdAsLong());
+        int rows = mesLotMapper.updateById(lot);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
+
+        String logRemark = StringUtils.hasText(remark) ? remark.trim() : null;
+        JSONObject ext = new JSONObject();
+        ext.set("edgeType", RouteEdgeTypes.SKIP_ALLOW);
+        ext.set("edgeId", String.valueOf(edge.getId()));
+        ext.set("fromSortNo", fromSortNo);
+        ext.set("toSortNo", toSortNo);
+        ext.set("skippedSortNos", skipped);
+        if (StringUtils.hasText(reason)) {
+            ext.set("reasonCode", reason);
+        }
+
+        writeTxLog(lot, TX_SKIP, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
+                target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
+
+        return toTxnVo(lot, TX_SKIP, false);
+    }
+
+    /** 现场台上下文：当前站 + 默认下一站 + 可选分支/回流/跳站列表 */
     @Override
     public TrackContextVO context(Long lotId) {
         MesLot lot = mesLotMapper.selectById(lotId);
@@ -334,7 +402,9 @@ public class TrackServiceImpl implements TrackService {
         vo.setCanTrackOut(STATUS_PROCESSING.equals(lot.getStatus()));
         vo.setReworkOptions(Collections.emptyList());
         vo.setBranchOptions(Collections.emptyList());
+        vo.setSkipOptions(Collections.emptyList());
         vo.setCanRework(false);
+        vo.setCanSkip(false);
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
 
         if (lot.getRouteVersionId() != null) {
@@ -415,6 +485,52 @@ public class TrackServiceImpl implements TrackService {
             vo.setReworkOptions(options);
             boolean statusOk = STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus());
             vo.setCanRework(statusOk && !options.isEmpty() && StpUtil.hasPermission("track:rework"));
+        }
+
+        List<MesRouteEdge> skipEdges = routeEdgeResolver.listSkip(
+                lot.getRouteVersionId(), lot.getCurrentSortNo());
+        if (!skipEdges.isEmpty()) {
+            Set<Integer> toSorts = skipEdges.stream().map(MesRouteEdge::getToSortNo).collect(Collectors.toSet());
+            Map<Integer, MesRouteStep> stepBySort = routeEdgeResolver.mapRouteStepsBySort(
+                    lot.getRouteVersionId(), toSorts);
+            Map<Long, MesStep> stepMap = routeEdgeResolver.mapStepsById(
+                    stepBySort.values().stream().map(MesRouteStep::getStepId).collect(Collectors.toSet()));
+            List<TrackSkipOptionVO> skipOptions = new ArrayList<>();
+            for (MesRouteEdge edge : skipEdges) {
+                List<Integer> skipped = routeEdgeResolver.computeSkippedSortNos(
+                        lot.getRouteVersionId(), lot.getCurrentSortNo(), edge.getToSortNo());
+                if (skipped == null) {
+                    continue;
+                }
+                Integer bad = routeEdgeResolver.findDisallowedSkipSort(
+                        lot.getRouteVersionId(), lot.getCurrentSortNo(), edge.getToSortNo(), skipped);
+                if (bad != null) {
+                    continue;
+                }
+                TrackSkipOptionVO opt = new TrackSkipOptionVO();
+                opt.setToSortNo(edge.getToSortNo());
+                opt.setSkippedSortNos(skipped);
+                if (StringUtils.hasText(edge.getReasonCodes())) {
+                    opt.setReasonCodes(Arrays.stream(edge.getReasonCodes().split(","))
+                            .map(String::trim)
+                            .filter(StringUtils::hasText)
+                            .toList());
+                } else {
+                    opt.setReasonCodes(Collections.emptyList());
+                }
+                MesRouteStep target = stepBySort.get(edge.getToSortNo());
+                if (target != null) {
+                    MesStep step = stepMap.get(target.getStepId());
+                    if (step != null) {
+                        opt.setToStepCode(step.getStepCode());
+                        opt.setToStepName(step.getStepName());
+                    }
+                }
+                skipOptions.add(opt);
+            }
+            vo.setSkipOptions(skipOptions);
+            boolean statusOk = STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus());
+            vo.setCanSkip(statusOk && !skipOptions.isEmpty() && StpUtil.hasPermission("track:skip"));
         }
         return vo;
     }
