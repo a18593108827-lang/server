@@ -67,6 +67,8 @@ public class MesRouteServiceImpl implements MesRouteService {
     public static final String EDGE_SKIP_ALLOW = com.mes.route.support.RouteEdgeTypes.SKIP_ALLOW;
     /** 临时离线边：Track 走 /track/off-flow */
     public static final String EDGE_OFF_FLOW = com.mes.route.support.RouteEdgeTypes.OFF_FLOW;
+    /** Queue Time 跨站约束边：不参与导航 */
+    public static final String EDGE_TIME_LINK = com.mes.route.support.RouteEdgeTypes.TIME_LINK;
 
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
@@ -270,22 +272,32 @@ public class MesRouteServiceImpl implements MesRouteService {
         if (dto.getEdges() != null) {
             Set<Integer> sortNos = items.stream().map(MesRouteStepsSaveDTO.Item::getSortNo)
                     .collect(Collectors.toSet());
-            // 前端可能误传 normal，这里滤掉，后面统一 insertNormalEdgesFromSteps
+            Map<String, MesRouteStepsSaveDTO.EdgeItem> normalQtime = dto.getEdges().stream()
+                    .filter(e -> e.getEdgeType() != null
+                            && EDGE_NORMAL.equalsIgnoreCase(e.getEdgeType().trim()))
+                    .collect(Collectors.toMap(
+                            e -> e.getFromSortNo() + "-" + e.getToSortNo(),
+                            e -> e,
+                            (a, b) -> a));
             List<MesRouteStepsSaveDTO.EdgeItem> nonNormal = dto.getEdges().stream()
                     .filter(e -> e.getEdgeType() != null
                             && !EDGE_NORMAL.equalsIgnoreCase(e.getEdgeType().trim()))
                     .toList();
             validateEdgeItems(nonNormal, sortNos);
+            validateQtimeFields(dto.getEdges());
             mesRouteEdgeMapper.physicalDeleteByVersionId(versionId);
-            insertNormalEdgesFromSteps(versionId, items);
+            Map<Integer, Integer> stepQtime = loadStepMaxQueueBySort(versionId);
+            insertNormalEdgesFromSteps(versionId, items, normalQtime, stepQtime);
             int i = 0;
             for (MesRouteStepsSaveDTO.EdgeItem edge : nonNormal) {
                 MesRouteEdge row = toEdgeEntity(versionId, edge, i++);
                 mesRouteEdgeMapper.insert(row);
             }
         } else {
+            Map<String, MesRouteEdge> oldNormals = loadNormalEdgeMap(versionId);
             mesRouteEdgeMapper.physicalDeleteNormalByVersionId(versionId);
-            insertNormalEdgesFromSteps(versionId, items);
+            Map<Integer, Integer> stepQtime = loadStepMaxQueueBySort(versionId);
+            insertNormalEdgesFromSteps(versionId, items, toOverlayFromEdges(oldNormals), stepQtime);
         }
     }
 
@@ -309,7 +321,8 @@ public class MesRouteServiceImpl implements MesRouteService {
                 .orderByAsc(MesRouteStep::getSortNo));
         stepEqpTypeGuard.assertPublishable(steps);
 
-        // 发布瞬间再刷一遍 normal：旧草稿可能只有 rework、缺默认边，否则校验过不了
+        // 发布瞬间再刷一遍 normal：保留旧 normal 上的 QueueTime，缺则回填步骤 max_queue_min
+        Map<String, MesRouteEdge> oldNormals = loadNormalEdgeMap(versionId);
         mesRouteEdgeMapper.physicalDeleteNormalByVersionId(versionId);
         int ni = 0;
         for (MesRouteStep step : steps) {
@@ -322,6 +335,8 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setToSortNo(step.getNextSortNo());
             row.setEdgeType(EDGE_NORMAL);
             row.setSortNo(ni++);
+            applyQtimeToNormal(row, oldNormals.get(step.getSortNo() + "-" + step.getNextSortNo()),
+                    step.getMaxQueueMin());
             mesRouteEdgeMapper.insert(row);
         }
 
@@ -333,7 +348,7 @@ public class MesRouteServiceImpl implements MesRouteService {
         validateReworkCanReachMainEnd(steps, edges); // 回流目标沿 next 必须能走到终点
         validateSkipAllowRules(steps, edges); // 跳站前向可达 + allow_skip
         validateOffFlowRules(steps, edges); // Off-Flow 主/旁路不相交
-
+        validateTimeLinkRules(edges, sortNos);
         // 旧版进行归档处理（修改状态）
         mesRouteVersionMapper.update(null, new LambdaUpdateWrapper<MesRouteVersion>()
                 .eq(MesRouteVersion::getRouteId, version.getRouteId())
@@ -408,12 +423,21 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setToSortNo(src.getToSortNo());
             row.setEdgeType(src.getEdgeType());
             row.setMaxReworkCount(src.getMaxReworkCount());
+            row.setMaxQueueMin(src.getMaxQueueMin());
+            row.setMinQueueMin(src.getMinQueueMin());
+            row.setOnViolate(src.getOnViolate());
             row.setReasonCodes(src.getReasonCodes());
             row.setConditionCode(src.getConditionCode());
             row.setSortNo(src.getSortNo());
             mesRouteEdgeMapper.insert(row);
         }
-        // 按源步骤的 next 生成新草稿的默认出边
+        // 按源步骤的 next 生成新草稿的默认出边（带 QueueTime）
+        Map<String, MesRouteEdge> oldNormals = fromEdges.stream()
+                .filter(e -> EDGE_NORMAL.equals(e.getEdgeType()))
+                .collect(Collectors.toMap(
+                        e -> e.getFromSortNo() + "-" + e.getToSortNo(),
+                        e -> e,
+                        (a, b) -> a));
         int ni = 0;
         for (MesRouteStep src : fromSteps) {
             if (src.getNextSortNo() == null) {
@@ -425,6 +449,8 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setToSortNo(src.getNextSortNo());
             row.setEdgeType(EDGE_NORMAL);
             row.setSortNo(ni++);
+            applyQtimeToNormal(row, oldNormals.get(src.getSortNo() + "-" + src.getNextSortNo()),
+                    src.getMaxQueueMin());
             mesRouteEdgeMapper.insert(row);
         }
         return draft.getId();
@@ -446,6 +472,9 @@ public class MesRouteServiceImpl implements MesRouteService {
             vo.setToSortNo(e.getToSortNo());
             vo.setEdgeType(e.getEdgeType());
             vo.setMaxReworkCount(e.getMaxReworkCount());
+            vo.setMaxQueueMin(e.getMaxQueueMin());
+            vo.setMinQueueMin(e.getMinQueueMin());
+            vo.setOnViolate(e.getOnViolate());
             vo.setReasonCodes(e.getReasonCodes());
             vo.setConditionCode(e.getConditionCode());
             vo.setSortNo(e.getSortNo());
@@ -455,7 +484,9 @@ public class MesRouteServiceImpl implements MesRouteService {
     }
 
     /** 把步骤链表 next_sort_no 落成 normal 边，供 TrackOut 默认选边 */
-    private void insertNormalEdgesFromSteps(Long versionId, List<MesRouteStepsSaveDTO.Item> items) {
+    private void insertNormalEdgesFromSteps(Long versionId, List<MesRouteStepsSaveDTO.Item> items,
+                                            Map<String, MesRouteStepsSaveDTO.EdgeItem> qtimeOverlay,
+                                            Map<Integer, Integer> stepQtime) {
         int i = 0;
         for (MesRouteStepsSaveDTO.Item item : items) {
             if (item.getNextSortNo() == null) {
@@ -467,7 +498,104 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setToSortNo(item.getNextSortNo());
             row.setEdgeType(EDGE_NORMAL);
             row.setSortNo(i++);
+            MesRouteStepsSaveDTO.EdgeItem overlay = qtimeOverlay == null ? null
+                    : qtimeOverlay.get(item.getSortNo() + "-" + item.getNextSortNo());
+            Integer stepMax = stepQtime == null ? null : stepQtime.get(item.getSortNo());
+            if (overlay != null) {
+                applyQtimeFromItem(row, overlay, stepMax);
+            } else if (stepMax != null && stepMax >= 1) {
+                row.setMaxQueueMin(stepMax);
+            }
             mesRouteEdgeMapper.insert(row);
+        }
+    }
+
+    private Map<String, MesRouteEdge> loadNormalEdgeMap(Long versionId) {
+        return mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                        .eq(MesRouteEdge::getVersionId, versionId)
+                        .eq(MesRouteEdge::getEdgeType, EDGE_NORMAL))
+                .stream()
+                .collect(Collectors.toMap(
+                        e -> e.getFromSortNo() + "-" + e.getToSortNo(),
+                        e -> e,
+                        (a, b) -> a));
+    }
+
+    private Map<String, MesRouteStepsSaveDTO.EdgeItem> toOverlayFromEdges(Map<String, MesRouteEdge> edges) {
+        Map<String, MesRouteStepsSaveDTO.EdgeItem> map = new HashMap<>();
+        if (edges == null) {
+            return map;
+        }
+        for (Map.Entry<String, MesRouteEdge> e : edges.entrySet()) {
+            MesRouteStepsSaveDTO.EdgeItem item = new MesRouteStepsSaveDTO.EdgeItem();
+            item.setMaxQueueMin(e.getValue().getMaxQueueMin());
+            item.setMinQueueMin(e.getValue().getMinQueueMin());
+            item.setOnViolate(e.getValue().getOnViolate());
+            map.put(e.getKey(), item);
+        }
+        return map;
+    }
+
+    private Map<Integer, Integer> loadStepMaxQueueBySort(Long versionId) {
+        return mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                        .eq(MesRouteStep::getVersionId, versionId))
+                .stream()
+                .filter(s -> s.getMaxQueueMin() != null && s.getMaxQueueMin() >= 1)
+                .collect(Collectors.toMap(MesRouteStep::getSortNo, MesRouteStep::getMaxQueueMin, (a, b) -> a));
+    }
+
+    private void applyQtimeToNormal(MesRouteEdge row, MesRouteEdge old, Integer stepMax) {
+        if (old != null && old.getMaxQueueMin() != null && old.getMaxQueueMin() >= 1) {
+            row.setMaxQueueMin(old.getMaxQueueMin());
+            row.setMinQueueMin(old.getMinQueueMin());
+            row.setOnViolate(old.getOnViolate());
+        } else if (stepMax != null && stepMax >= 1) {
+            row.setMaxQueueMin(stepMax);
+        }
+    }
+
+    private void applyQtimeFromItem(MesRouteEdge row, MesRouteStepsSaveDTO.EdgeItem item, Integer stepMax) {
+        if (item.getMaxQueueMin() != null && item.getMaxQueueMin() >= 1) {
+            row.setMaxQueueMin(item.getMaxQueueMin());
+            row.setMinQueueMin(item.getMinQueueMin());
+            row.setOnViolate(normalizeOnViolate(item.getOnViolate()));
+        } else if (stepMax != null && stepMax >= 1) {
+            row.setMaxQueueMin(stepMax);
+        }
+    }
+
+    private String normalizeOnViolate(String onViolate) {
+        if (!StringUtils.hasText(onViolate)) {
+            return null;
+        }
+        String p = onViolate.trim().toUpperCase();
+        AssertUtil.isTrue("HOLD".equals(p) || "ALARM".equals(p) || "HOLD_ALARM".equals(p),
+                "非法 onViolate: " + onViolate);
+        return p;
+    }
+
+    private void validateQtimeFields(List<MesRouteStepsSaveDTO.EdgeItem> edges) {
+        for (MesRouteStepsSaveDTO.EdgeItem edge : edges) {
+            if (edge.getMaxQueueMin() != null) {
+                AssertUtil.isTrue(edge.getMaxQueueMin() >= 1, "maxQueueMin 须≥1");
+            }
+            if (StringUtils.hasText(edge.getOnViolate())) {
+                normalizeOnViolate(edge.getOnViolate());
+            }
+        }
+    }
+
+    private void validateTimeLinkRules(List<MesRouteEdge> edges, Set<Integer> sortNos) {
+        for (MesRouteEdge edge : edges) {
+            if (!EDGE_TIME_LINK.equals(edge.getEdgeType())) {
+                continue;
+            }
+            AssertUtil.notNull(edge.getMaxQueueMin(), "time_link 须配置 maxQueueMin");
+            AssertUtil.isTrue(edge.getMaxQueueMin() >= 1, "maxQueueMin 须≥1");
+            AssertUtil.isTrue(sortNos.contains(edge.getFromSortNo()) && sortNos.contains(edge.getToSortNo()),
+                    "time_link 站序非法");
+            AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
+                    "time_link 不能指向自身");
         }
     }
 
@@ -480,6 +608,9 @@ public class MesRouteServiceImpl implements MesRouteService {
         row.setToSortNo(edge.getToSortNo());
         row.setEdgeType(type);
         row.setMaxReworkCount(edge.getMaxReworkCount());
+        row.setMaxQueueMin(edge.getMaxQueueMin());
+        row.setMinQueueMin(edge.getMinQueueMin());
+        row.setOnViolate(normalizeOnViolate(edge.getOnViolate()));
         row.setReasonCodes(blankToNull(edge.getReasonCodes()));
         if (EDGE_BRANCH.equals(type) && StringUtils.hasText(edge.getConditionCode())) {
             row.setConditionCode(edge.getConditionCode().trim().toUpperCase());
@@ -504,7 +635,7 @@ public class MesRouteServiceImpl implements MesRouteService {
             String type = edge.getEdgeType().trim().toLowerCase();
             AssertUtil.isTrue(EDGE_BRANCH.equals(type) || EDGE_REWORK.equals(type)
                             || EDGE_NORMAL.equals(type) || EDGE_SKIP_ALLOW.equals(type)
-                            || EDGE_OFF_FLOW.equals(type),
+                            || EDGE_OFF_FLOW.equals(type) || EDGE_TIME_LINK.equals(type),
                     "不支持的边类型: " + type);
             AssertUtil.isTrue(sortNos.contains(edge.getFromSortNo()),
                     "边起点顺序号不存在: " + edge.getFromSortNo());
@@ -533,6 +664,12 @@ public class MesRouteServiceImpl implements MesRouteService {
                 AssertUtil.notNull(edge.getMaxReworkCount(), "Off-Flow 边须配置次数上限");
                 AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "Off-Flow 次数上限须≥1");
                 AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "Off-Flow 边不能配置条件码");
+            }
+            if (EDGE_TIME_LINK.equals(type)) {
+                AssertUtil.notNull(edge.getMaxQueueMin(), "time_link 须配置 maxQueueMin");
+                AssertUtil.isTrue(edge.getMaxQueueMin() >= 1, "maxQueueMin 须≥1");
+                AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "time_link 不能配置条件码");
+                AssertUtil.isTrue(edge.getMaxReworkCount() == null, "time_link 不能配置回流次数");
             }
             if (EDGE_NORMAL.equals(type)) {
                 AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "默认边不能配置条件码");
@@ -567,6 +704,14 @@ public class MesRouteServiceImpl implements MesRouteService {
                 AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "Off-Flow 次数上限须≥1");
                 AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
                         "Off-Flow 边不能指向自身");
+            }
+            if (edge.getMaxQueueMin() != null) {
+                AssertUtil.isTrue(edge.getMaxQueueMin() >= 1, "maxQueueMin 须≥1");
+            }
+            if (EDGE_TIME_LINK.equals(edge.getEdgeType())) {
+                AssertUtil.notNull(edge.getMaxQueueMin(), "time_link 须配置 maxQueueMin");
+                AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
+                        "time_link 不能指向自身");
             }
         }
     }

@@ -36,4 +36,6 @@ public class TrackContextVO {
     private Boolean completed;
     /** 未生效预约锁批（pending） */
     private List<MesFutureHoldVO> pendingFutureHolds;
+    /** Queue Time 开窗；无则 null */
+    private TrackQueueTimeVO queueTime;
 }

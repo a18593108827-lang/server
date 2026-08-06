@@ -39,3 +39,8 @@ mes:
   step:
     # off=不校验 | soft=有类型才校验 | force=加工站必须有类型且强制匹配
     eqp-type-mode: soft
+  qtime:
+    enabled: true
+    default-on-violate: HOLD
+    alarm-only-block: true
+    fail-open: true

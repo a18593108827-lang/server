@@ -49,6 +49,12 @@ public class MesRouteStepsSaveDTO {
         private String reasonCodes;
         /** branch 条件码 */
         private String conditionCode;
+        /** Queue Time 上限分钟 */
+        private Integer maxQueueMin;
+        /** Queue Time 下限预留 */
+        private Integer minQueueMin;
+        /** HOLD / ALARM / HOLD_ALARM */
+        private String onViolate;
         private Integer sortNo;
     }
 }

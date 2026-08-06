@@ -8,6 +8,8 @@ import com.mes.common.BaseEntity;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 
+import java.time.LocalDateTime;
+
 /**
  * 批次实体：主数据 + 快照指针 + Track 写入的运行态
  */
@@ -70,6 +72,21 @@ public class MesLot extends BaseEntity {
 
     /** 按触发站累计 Off-Flow 次数 JSON，如 {"30":1} */
     private String offFlowCounts;
+
+    /** Queue Time 开窗触发站 */
+    private Integer qtimeFromSort;
+
+    /** Queue Time 目标站 */
+    private Integer qtimeToSort;
+
+    /** Queue Time 开窗时刻 */
+    private LocalDateTime qtimeStartedAt;
+
+    /** Queue Time 开窗固化上限分钟 */
+    private Integer qtimeMaxMin;
+
+    /** Queue Time 开窗固化策略 HOLD/ALARM/HOLD_ALARM */
+    private String qtimeOnViolate;
 
     /**
      * 状态：created 已创建 / released 已放行(过渡) / wait 等待加工 /

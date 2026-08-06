@@ -11,5 +11,8 @@ public class MesRouteEdgeVO {
     private Integer maxReworkCount;
     private String reasonCodes;
     private String conditionCode;
+    private Integer maxQueueMin;
+    private Integer minQueueMin;
+    private String onViolate;
     private Integer sortNo;
 }

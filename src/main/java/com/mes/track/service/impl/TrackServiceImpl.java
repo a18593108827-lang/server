@@ -36,6 +36,7 @@ import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
 import com.mes.track.service.TrackService;
 import com.mes.track.support.OffFlowCountStore;
+import com.mes.track.support.QueueTimeSupport;
 import com.mes.track.support.ReworkCountStore;
 import com.mes.track.vo.MesTxLogVO;
 import com.mes.track.vo.TrackBranchOptionVO;
@@ -100,6 +101,7 @@ public class TrackServiceImpl implements TrackService {
     private final ReworkCountStore reworkCountStore;
     private final OffFlowCountStore offFlowCountStore;
     private final StepEqpTypeGuard stepEqpTypeGuard;
+    private final QueueTimeSupport queueTimeSupport;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -139,6 +141,7 @@ public class TrackServiceImpl implements TrackService {
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        queueTimeSupport.clearPersisted(lot);
         wipProjectionService.syncFromLot(lot);
 
         writeTxLog(lot, TX_RELEASE, fromStatus, STATUS_WAIT, fromSortNo, firstStep.getSortNo(),
@@ -164,6 +167,8 @@ public class TrackServiceImpl implements TrackService {
         MesLot lot = requireExecutableLot(lotId);
         // Future Hold PRE：独立事务激活后，本事务 assert 拦截开工（激活不回滚）
         futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
+        holdService.assertNoActive(lotId);
+        queueTimeSupport.assertAndSettleOnTrackIn(lot);
         holdService.assertNoActive(lotId);
         mesEqpService.assertUsable(eqpId);
         dispatchService.assertReserveMatch(lotId, eqpId);// 预约匹配
@@ -264,6 +269,8 @@ public class TrackServiceImpl implements TrackService {
                 decision.getToStepId(), fromEqpId, lot.getRouteVersionId(), decision.getRemark(),
                 null, null, decision.toExtJson());
 
+        queueTimeSupport.openAfterTrackOut(lot, fromSortNo, decision);
+
         // Future Hold POST：落新站后再激活（本次 Out 已成功，下次推进被拦）
         if (!decision.isCompleted() && lot.getCurrentSortNo() != null) {
             futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_POST);
@@ -313,6 +320,8 @@ public class TrackServiceImpl implements TrackService {
         Long fromEqpId = lot.getCurrentEqpId();
         int newCount = used + 1;
         reworkCountStore.put(lot, fromSortNo, newCount);
+
+        queueTimeSupport.clearWithLog(lot, "Rework 清除 QueueTime");
 
         lot.setStatus(STATUS_WAIT);
         lot.setCurrentSortNo(target.getSortNo());
@@ -408,6 +417,8 @@ public class TrackServiceImpl implements TrackService {
 
         writeTxLog(lot, TX_SKIP, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
                 target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
+
+        queueTimeSupport.onSkip(lot, fromSortNo, toSortNo, skipped);
 
         // 改站后检查目标站 PRE 预约
         futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
@@ -617,6 +628,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
         vo.setPendingFutureHolds(futureHoldService.listPendingByLot(lotId));
+        vo.setQueueTime(queueTimeSupport.toContextVo(lot));
 
         if (lot.getRouteVersionId() != null) {
             MesRouteVersion version = mesRouteVersionMapper.selectById(lot.getRouteVersionId());
