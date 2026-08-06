@@ -1,5 +1,6 @@
 package com.mes.track.vo;
 
+import com.mes.hold.vo.MesFutureHoldVO;
 import com.mes.lot.vo.MesLotStepVO;
 import lombok.Data;
 
@@ -33,4 +34,6 @@ public class TrackContextVO {
     private List<TrackSkipOptionVO> skipOptions;
     private List<TrackOffFlowOptionVO> offFlowOptions;
     private Boolean completed;
+    /** 未生效预约锁批（pending） */
+    private List<MesFutureHoldVO> pendingFutureHolds;
 }

@@ -9,7 +9,9 @@ import com.mes.dispatch.service.DispatchService;
 import com.mes.equipment.entity.MesEqp;
 import com.mes.equipment.mapper.MesEqpMapper;
 import com.mes.equipment.service.MesEqpService;
+import com.mes.hold.service.FutureHoldService;
 import com.mes.hold.service.HoldService;
+import com.mes.hold.service.impl.FutureHoldServiceImpl;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.lot.vo.MesLotStepVO;
@@ -89,6 +91,7 @@ public class TrackServiceImpl implements TrackService {
     private final SysUserMapper sysUserMapper;
     private final WipProjectionService wipProjectionService;
     private final HoldService holdService;
+    private final FutureHoldService futureHoldService;
     private final MesEqpService mesEqpService;
     private final MesEqpMapper mesEqpMapper;
     private final DispatchService dispatchService;
@@ -159,6 +162,8 @@ public class TrackServiceImpl implements TrackService {
     @Transactional(rollbackFor = Exception.class)
     public TrackTxnResultVO trackIn(Long lotId, Long eqpId) {
         MesLot lot = requireExecutableLot(lotId);
+        // Future Hold PRE：独立事务激活后，本事务 assert 拦截开工（激活不回滚）
+        futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
         holdService.assertNoActive(lotId);
         mesEqpService.assertUsable(eqpId);
         dispatchService.assertReserveMatch(lotId, eqpId);// 预约匹配
@@ -259,6 +264,11 @@ public class TrackServiceImpl implements TrackService {
                 decision.getToStepId(), fromEqpId, lot.getRouteVersionId(), decision.getRemark(),
                 null, null, decision.toExtJson());
 
+        // Future Hold POST：落新站后再激活（本次 Out 已成功，下次推进被拦）
+        if (!decision.isCompleted() && lot.getCurrentSortNo() != null) {
+            futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_POST);
+        }
+
         return toTxnVo(lot, TX_TRACK_OUT, decision.isCompleted());
     }
 
@@ -324,6 +334,9 @@ public class TrackServiceImpl implements TrackService {
 
         writeTxLog(lot, TX_REWORK, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
                 target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
+
+        // 改站后检查目标站 PRE 预约
+        futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
 
         TrackTxnResultVO vo = toTxnVo(lot, TX_REWORK, false);
         vo.setReworkCount(newCount);
@@ -396,6 +409,8 @@ public class TrackServiceImpl implements TrackService {
         writeTxLog(lot, TX_SKIP, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
                 target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
 
+        // 改站后检查目标站 PRE 预约
+        futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
         return toTxnVo(lot, TX_SKIP, false);
     }
 
@@ -470,6 +485,9 @@ public class TrackServiceImpl implements TrackService {
 
         writeTxLog(lot, TX_OFF_FLOW, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
                 target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
+
+        // 改站后检查目标站 PRE 预约
+        futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
 
         TrackTxnResultVO vo = toTxnVo(lot, TX_OFF_FLOW, false);
         vo.setOffFlowCount(newCount);
@@ -564,6 +582,8 @@ public class TrackServiceImpl implements TrackService {
         writeTxLog(lot, TX_OFF_FLOW_RESUME, fromStatus, restoreStatus, fromSortNo, anchor.getSortNo(),
                 anchor.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
 
+        // 回锚点后检查 PRE 预约
+        futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
         return toTxnVo(lot, TX_OFF_FLOW_RESUME, false);
     }
 
@@ -596,6 +616,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setOffFlow(isOffFlow(lot));
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
+        vo.setPendingFutureHolds(futureHoldService.listPendingByLot(lotId));
 
         if (lot.getRouteVersionId() != null) {
             MesRouteVersion version = mesRouteVersionMapper.selectById(lot.getRouteVersionId());

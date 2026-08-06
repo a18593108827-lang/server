@@ -11,7 +11,9 @@ import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.service.MesLotService;
 import com.mes.lot.vo.MesLotCreateResultVO;
 import com.mes.lot.vo.MesLotVO;
+import com.mes.hold.service.FutureHoldService;
 import com.mes.hold.service.HoldService;
+import com.mes.hold.vo.MesFutureHoldVO;
 import com.mes.hold.vo.MesHoldVO;
 import com.mes.track.service.TrackService;
 import com.mes.track.vo.MesTxLogVO;
@@ -38,6 +40,7 @@ public class MesLotController {
     private final MesLotService mesLotService;
     private final TrackService trackService;
     private final HoldService holdService;
+    private final FutureHoldService futureHoldService;
 
     /** 分页列表 */
     @SaCheckPermission("lot:list")
@@ -73,6 +76,13 @@ public class MesLotController {
     @GetMapping("/{id}/holds")
     public R<List<MesHoldVO>> holds(@PathVariable Long id) {
         return R.ok(holdService.listByLot(id));
+    }
+
+    /** 某批预约锁批（含终态） */
+    @SaCheckPermission(value = {"hold:list", "track:view"}, mode = SaMode.OR)
+    @GetMapping("/{id}/future-holds")
+    public R<List<MesFutureHoldVO>> futureHolds(@PathVariable Long id) {
+        return R.ok(futureHoldService.listByLot(id));
     }
 
     /** 改属性 */
