@@ -8,6 +8,8 @@
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_eqp.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_hold.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_lot.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_off_flow.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_off_flow_count.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_recipe.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_rework.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_route.sql" dialect="MySQL" />

@@ -83,6 +83,91 @@ public class RouteEdgeResolver {
     }
 
     /**
+     * 获取off-flow边数组
+     */
+    public List<MesRouteEdge> listOffFlow(Long versionId, Integer fromSortNo) {
+        return mesRouteEdgeMapper.selectList(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, versionId)
+                .eq(MesRouteEdge::getFromSortNo, fromSortNo)
+                .eq(MesRouteEdge::getEdgeType, RouteEdgeTypes.OFF_FLOW)
+                .orderByAsc(MesRouteEdge::getSortNo));
+    }
+
+    /**
+     * 获取off-flow边
+     */
+    public MesRouteEdge findOffFlow(Long versionId, Integer fromSortNo, Integer toSortNo) {
+        return mesRouteEdgeMapper.selectOne(new LambdaQueryWrapper<MesRouteEdge>()
+                .eq(MesRouteEdge::getVersionId, versionId)
+                .eq(MesRouteEdge::getFromSortNo, fromSortNo)
+                .eq(MesRouteEdge::getToSortNo, toSortNo)
+                .eq(MesRouteEdge::getEdgeType, RouteEdgeTypes.OFF_FLOW)
+                .last("LIMIT 1"));
+    }
+
+    /** 从起点（最小 sort）沿 next 可达的主路径站集合 */
+    public Set<Integer> computeMainPathSortNos(Long versionId) {
+        List<MesRouteStep> steps = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                .eq(MesRouteStep::getVersionId, versionId));
+        if (steps.isEmpty()) {
+            return Collections.emptySet();
+        }
+        Map<Integer, Integer> nextMap = new HashMap<>();
+        Integer start = null;
+        for (MesRouteStep step : steps) {
+            nextMap.put(step.getSortNo(), step.getNextSortNo());
+            if (start == null || step.getSortNo() < start) {
+                start = step.getSortNo();
+            }
+        }
+        return walkAlongNext(start, nextMap);
+    }
+
+    /** 从 entry 沿 next 走到终点（含 entry）；成环返回 null */
+    public List<Integer> walkOffFlowChain(Long versionId, Integer entrySortNo) {
+        if (versionId == null || entrySortNo == null) {
+            return null;
+        }
+        List<MesRouteStep> steps = mesRouteStepMapper.selectList(new LambdaQueryWrapper<MesRouteStep>()
+                .eq(MesRouteStep::getVersionId, versionId));
+        Map<Integer, Integer> nextMap = new HashMap<>();
+        for (MesRouteStep step : steps) {
+            nextMap.put(step.getSortNo(), step.getNextSortNo());
+        }
+        if (!nextMap.containsKey(entrySortNo)) {
+            return null;
+        }
+        List<Integer> chain = new ArrayList<>();
+        Set<Integer> visited = new HashSet<>();
+        Integer cur = entrySortNo;
+        while (cur != null) {
+            if (!visited.add(cur)) {
+                return null;
+            }
+            chain.add(cur);
+            cur = nextMap.get(cur);
+        }
+        return chain;
+    }
+
+    public boolean isOffFlowTerminal(Long versionId, Integer sortNo) {
+        MesRouteStep step = findStep(versionId, sortNo);
+        if (step == null) {
+            return false;
+        }
+        return step.getNextSortNo() == null;
+    }
+
+    private static Set<Integer> walkAlongNext(Integer start, Map<Integer, Integer> nextMap) {
+        Set<Integer> path = new HashSet<>();
+        Integer cur = start;
+        while (cur != null && path.add(cur)) {
+            cur = nextMap.get(cur);
+        }
+        return path;
+    }
+
+    /**
      * 主路径 from→to 开区间内的站序；不可达返回 null。
      */
     public List<Integer> computeSkippedSortNos(Long versionId, Integer fromSortNo, Integer toSortNo) {

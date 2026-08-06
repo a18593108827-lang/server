@@ -23,9 +23,14 @@ public class TrackContextVO {
     private Boolean canTrackOut;
     private Boolean canRework;
     private Boolean canSkip;
+    private Boolean canEnterOffFlow;
+    private Boolean canResumeOffFlow;
+    private Boolean offFlow;
+    private Integer offFlowAnchorSortNo;
     private Integer reworkCount;
     private List<TrackReworkOptionVO> reworkOptions;
     private List<TrackBranchOptionVO> branchOptions;
     private List<TrackSkipOptionVO> skipOptions;
+    private List<TrackOffFlowOptionVO> offFlowOptions;
     private Boolean completed;
 }

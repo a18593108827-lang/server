@@ -33,4 +33,10 @@ public interface DispatchService {
      * 没有 / 机台对不上 → 什么都不做
      */
     void consumeOnTrackIn(Long lotId, Long eqpId, Long txLogId);
+
+    /**
+     * 设备是否被其他批次 Off-Flow 锚点占用（processing 进旁路后逻辑占台）。
+     * excludeLotId 为当前批时可排除自身。
+     */
+    void assertNotOffFlowAnchored(Long eqpId, Long excludeLotId);
 }

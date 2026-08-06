@@ -5,6 +5,8 @@ import cn.dev33.satoken.annotation.SaMode;
 import com.mes.common.R;
 import com.mes.common.annotation.OperLog;
 import com.mes.track.dto.TrackInDTO;
+import com.mes.track.dto.TrackOffFlowDTO;
+import com.mes.track.dto.TrackOffFlowResumeDTO;
 import com.mes.track.dto.TrackOutDTO;
 import com.mes.track.dto.TrackReleaseDTO;
 import com.mes.track.dto.TrackReworkDTO;
@@ -71,6 +73,22 @@ public class TrackController {
     @PostMapping("/skip")
     public R<TrackTxnResultVO> skip(@Valid @RequestBody TrackSkipDTO dto) {
         return R.ok(trackService.skip(dto.getLotId(), dto.getToSortNo(), dto.getReasonCode(), dto.getRemark()));
+    }
+
+    /** 进入 Temporary Off-Flow */
+    @SaCheckPermission("track:off-flow")
+    @OperLog(module = "Track", action = "OffFlow")
+    @PostMapping("/off-flow")
+    public R<TrackTxnResultVO> enterOffFlow(@Valid @RequestBody TrackOffFlowDTO dto) {
+        return R.ok(trackService.enterOffFlow(dto.getLotId(), dto.getToSortNo(), dto.getReasonCode(), dto.getRemark()));
+    }
+
+    /** Off-Flow 回主路径锚点 */
+    @SaCheckPermission("track:off-flow")
+    @OperLog(module = "Track", action = "OffFlowResume")
+    @PostMapping("/off-flow/resume")
+    public R<TrackTxnResultVO> resumeOffFlow(@Valid @RequestBody TrackOffFlowResumeDTO dto) {
+        return R.ok(trackService.resumeOffFlow(dto.getLotId(), dto.getRemark()));
     }
 
     /** 执行上下文（只读） */

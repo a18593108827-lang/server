@@ -28,6 +28,12 @@ public interface TrackService {
     /** 前向跳站：仅 wait → wait(目标站)；processing 拒绝 */
     TrackTxnResultVO skip(Long lotId, Integer toSortNo, String reasonCode, String remark);
 
+    /** 进入 Temporary Off-Flow：wait|processing → 旁路入口 wait */
+    TrackTxnResultVO enterOffFlow(Long lotId, Integer toSortNo, String reasonCode, String remark);
+
+    /** 旁路末站回锚点 */
+    TrackTxnResultVO resumeOffFlow(Long lotId, String remark);
+
     /** 执行上下文：当前站 / 下一站 / 可操作标记 */
     TrackContextVO context(Long lotId);
 

@@ -100,6 +100,7 @@ public class DispatchServiceImpl implements DispatchService {
         }
 
         Set<Long> blockedEqpIds = loadBlockedEqpIds(lotId);
+        blockedEqpIds.addAll(loadOffFlowAnchorEqpIds(lotId));
         Map<Long, Integer> loadMap = loadCounts(rows.stream().map(MesEqp::getId).collect(Collectors.toList()));
 
         List<Long> eqpIds = rows.stream().map(MesEqp::getId).collect(Collectors.toList());
@@ -160,6 +161,7 @@ public class DispatchServiceImpl implements DispatchService {
         holdService.assertNoActive(lot.getId());
 
         mesEqpService.assertUsable(dto.getEqpId());
+        assertNotOffFlowAnchored(dto.getEqpId(), lot.getId());
         MesEqp eqp = mesEqpMapper.selectById(dto.getEqpId());
         AssertUtil.notNull(eqp, "设备不存在");
         stepEqpTypeGuard.requireMatch(lot, dto.getEqpId());
@@ -275,6 +277,25 @@ public class DispatchServiceImpl implements DispatchService {
             return;
         }
         leaveActive(active, RESERVE_CONSUMED, null, txLogId);
+    }
+
+    @Override
+    public void assertNotOffFlowAnchored(Long eqpId, Long excludeLotId) {
+        if (eqpId == null) {
+            return;
+        }
+        LambdaQueryWrapper<MesLot> qw = new LambdaQueryWrapper<MesLot>()
+                .eq(MesLot::getOffFlow, 1)
+                .eq(MesLot::getOffFlowAnchorEqpId, eqpId)
+                .eq(MesLot::getOffFlowAnchorStatus, "processing");
+        if (excludeLotId != null) {
+            qw.ne(MesLot::getId, excludeLotId);
+        }
+        MesLot holder = mesLotMapper.selectOne(qw.last("LIMIT 1"));
+        if (holder == null) {
+            return;
+        }
+        throw new BusinessException("设备被 Off-Flow 批次占用：" + holder.getLotNo());
     }
 
     // 获取当前批次的 active 预约；forUpdate=true 时行锁（须在事务内）
@@ -398,6 +419,25 @@ public class DispatchServiceImpl implements DispatchService {
         return set;
     }
 
+    /** 其他批 processing 进 Off-Flow 后锚点机台，候选列表剔除 */
+    private Set<Long> loadOffFlowAnchorEqpIds(Long lotId) {
+        LambdaQueryWrapper<MesLot> qw = new LambdaQueryWrapper<MesLot>()
+                .eq(MesLot::getOffFlow, 1)
+                .eq(MesLot::getOffFlowAnchorStatus, "processing")
+                .isNotNull(MesLot::getOffFlowAnchorEqpId);
+        if (lotId != null) {
+            qw.ne(MesLot::getId, lotId);
+        }
+        List<MesLot> rows = mesLotMapper.selectList(qw);
+        Set<Long> set = new HashSet<>();
+        for (MesLot row : rows) {
+            if (row.getOffFlowAnchorEqpId() != null) {
+                set.add(row.getOffFlowAnchorEqpId());
+            }
+        }
+        return set;
+    }
+
     private Map<Long, Integer> loadCounts(List<Long> eqpIds) {
         if (eqpIds == null || eqpIds.isEmpty()) {
             return Map.of();
@@ -411,6 +451,17 @@ public class DispatchServiceImpl implements DispatchService {
                 continue;
             }
             map.merge(lot.getCurrentEqpId(), 1, Integer::sum);
+        }
+        // Off-Flow 锚点机台仍计负载（对齐 CM 逻辑占台）
+        List<MesLot> anchors = mesLotMapper.selectList(new LambdaQueryWrapper<MesLot>()
+                .eq(MesLot::getOffFlow, 1)
+                .eq(MesLot::getOffFlowAnchorStatus, "processing")
+                .in(MesLot::getOffFlowAnchorEqpId, eqpIds));
+        for (MesLot lot : anchors) {
+            if (lot.getOffFlowAnchorEqpId() == null) {
+                continue;
+            }
+            map.merge(lot.getOffFlowAnchorEqpId(), 1, Integer::sum);
         }
         return map;
     }

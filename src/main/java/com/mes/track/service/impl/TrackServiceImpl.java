@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.common.AssertUtil;
+import com.mes.common.BusinessException;
 import com.mes.dispatch.service.DispatchService;
 import com.mes.equipment.entity.MesEqp;
 import com.mes.equipment.mapper.MesEqpMapper;
@@ -32,10 +33,12 @@ import com.mes.system.mapper.SysUserMapper;
 import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
 import com.mes.track.service.TrackService;
+import com.mes.track.support.OffFlowCountStore;
 import com.mes.track.support.ReworkCountStore;
 import com.mes.track.vo.MesTxLogVO;
 import com.mes.track.vo.TrackBranchOptionVO;
 import com.mes.track.vo.TrackContextVO;
+import com.mes.track.vo.TrackOffFlowOptionVO;
 import com.mes.track.vo.TrackReleaseResultVO;
 import com.mes.track.vo.TrackReworkOptionVO;
 import com.mes.track.vo.TrackSkipOptionVO;
@@ -74,6 +77,8 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_TRACK_OUT = "TRACK_OUT";
     public static final String TX_REWORK = "REWORK";
     public static final String TX_SKIP = "SKIP";
+    public static final String TX_OFF_FLOW = "OFF_FLOW";
+    public static final String TX_OFF_FLOW_RESUME = "OFF_FLOW_RESUME";
 
     private final MesLotMapper mesLotMapper;
     private final MesRouteMapper mesRouteMapper;
@@ -90,6 +95,7 @@ public class TrackServiceImpl implements TrackService {
     private final RecipeFacade recipeFacade;
     private final RouteEdgeResolver routeEdgeResolver;
     private final ReworkCountStore reworkCountStore;
+    private final OffFlowCountStore offFlowCountStore;
     private final StepEqpTypeGuard stepEqpTypeGuard;
 
     @Override
@@ -125,6 +131,8 @@ public class TrackServiceImpl implements TrackService {
         lot.setCurrentStepId(firstStep.getStepId());
         lot.setCurrentEqpId(null);
         lot.setReworkCounts(null);
+        lot.setOffFlowCounts(null);
+        clearOffFlow(lot);
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
@@ -154,6 +162,7 @@ public class TrackServiceImpl implements TrackService {
         holdService.assertNoActive(lotId);
         mesEqpService.assertUsable(eqpId);
         dispatchService.assertReserveMatch(lotId, eqpId);// 预约匹配
+        dispatchService.assertNotOffFlowAnchored(eqpId, lotId);// Off-Flow 锚点占台
         AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅等待加工状态可开工");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法开工");
         AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
@@ -223,6 +232,11 @@ public class TrackServiceImpl implements TrackService {
         RouteTrackOutDecision decision = routeEdgeResolver.resolveTrackOut(
                 lot.getRouteVersionId(), current, resultCode);
 
+        // 旁路末站无下一站：不完工，走 Resume 回锚点
+        if (decision.isCompleted() && isOffFlow(lot)) {
+            return doResumeOffFlow(lot, fromStatus, fromSortNo, fromEqpId, true, null);
+        }
+
         String toStatus;
         if (decision.isCompleted()) {
             toStatus = STATUS_COMPLETED;
@@ -259,6 +273,7 @@ public class TrackServiceImpl implements TrackService {
         holdService.assertNoActive(lotId);
         AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus()),
                 "仅等待或加工中状态可返工");
+        AssertUtil.isFalse(isOffFlow(lot), "Off-Flow 中不可返工");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法返工");
         AssertUtil.notNull(toSortNo, "回流目标站不能为空");
 
@@ -327,6 +342,7 @@ public class TrackServiceImpl implements TrackService {
         holdService.assertNoActive(lotId);
         AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()),
                 "仅等待状态可跳站，加工中请先完工");
+        AssertUtil.isFalse(isOffFlow(lot), "Off-Flow 中不可跳站");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法跳站");
         AssertUtil.notNull(toSortNo, "跳站目标站不能为空");
 
@@ -383,7 +399,175 @@ public class TrackServiceImpl implements TrackService {
         return toTxnVo(lot, TX_SKIP, false);
     }
 
-    /** 现场台上下文：当前站 + 默认下一站 + 可选分支/回流/跳站列表 */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackTxnResultVO enterOffFlow(Long lotId, Integer toSortNo, String reasonCode, String remark) {
+        MesLot lot = requireExecutableLot(lotId);
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus()),
+                "当前状态不可进入 Off-Flow");
+        AssertUtil.isFalse(isOffFlow(lot), "已在 Off-Flow 中");
+        AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法进入 Off-Flow");
+        AssertUtil.notNull(toSortNo, "Off-Flow 目标站不能为空");
+
+        Integer fromSortNo = lot.getCurrentSortNo();
+        MesRouteEdge edge = routeEdgeResolver.findOffFlow(lot.getRouteVersionId(), fromSortNo, toSortNo);
+        AssertUtil.notNull(edge, "当前站未配置 Off-Flow");
+
+        String reason = reasonCode == null ? null : reasonCode.trim();
+        if (StringUtils.hasText(edge.getReasonCodes())) {
+            AssertUtil.notBlank(reason, "Off-Flow 原因不能为空");
+            Set<String> allowed = Arrays.stream(edge.getReasonCodes().split(","))
+                    .map(String::trim)
+                    .filter(StringUtils::hasText)
+                    .collect(Collectors.toSet());
+            AssertUtil.isTrue(allowed.contains(reason), "Off-Flow 原因不匹配");
+        }
+
+        MesRouteStep target = routeEdgeResolver.findStep(lot.getRouteVersionId(), toSortNo);
+        AssertUtil.notNull(target, "Off-Flow 入口站不存在");
+        int max = edge.getMaxReworkCount() != null && edge.getMaxReworkCount() >= 1
+                ? edge.getMaxReworkCount() : 1;
+
+        int used = offFlowCountStore.get(lot, fromSortNo);
+        AssertUtil.isTrue(used + 1 <= max, "Off-Flow 次数已达上限");
+
+        String fromStatus = lot.getStatus();
+        Long fromEqpId = lot.getCurrentEqpId();
+        int newCount = used + 1;
+        offFlowCountStore.put(lot, fromSortNo, newCount);
+
+        lot.setOffFlow(1);
+        lot.setOffFlowAnchorSort(fromSortNo);
+        lot.setOffFlowAnchorStepId(lot.getCurrentStepId());
+        lot.setOffFlowAnchorEqpId(fromEqpId);
+        lot.setOffFlowAnchorStatus(fromStatus);
+        lot.setStatus(STATUS_WAIT);
+        lot.setCurrentSortNo(target.getSortNo());
+        lot.setCurrentStepId(target.getStepId());
+        lot.setCurrentEqpId(null);
+        lot.setUpdateBy(StpUtil.getLoginIdAsLong());
+        int rows = mesLotMapper.updateById(lot);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
+
+        String logRemark = StringUtils.hasText(remark) ? remark.trim() : null;
+        JSONObject ext = new JSONObject();
+        ext.set("edgeType", RouteEdgeTypes.OFF_FLOW);
+        ext.set("edgeId", String.valueOf(edge.getId()));
+        ext.set("fromSortNo", fromSortNo);
+        ext.set("toSortNo", toSortNo);
+        ext.set("anchorSortNo", fromSortNo);
+        ext.set("anchorStatus", fromStatus);
+        if (fromEqpId != null) {
+            ext.set("anchorEqpId", String.valueOf(fromEqpId));
+        }
+        if (StringUtils.hasText(reason)) {
+            ext.set("reasonCode", reason);
+        }
+        ext.set("offFlowCount", newCount);
+        ext.set("maxOffFlowCount", max);
+
+        writeTxLog(lot, TX_OFF_FLOW, fromStatus, STATUS_WAIT, fromSortNo, target.getSortNo(),
+                target.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
+
+        TrackTxnResultVO vo = toTxnVo(lot, TX_OFF_FLOW, false);
+        vo.setOffFlowCount(newCount);
+        vo.setMaxOffFlowCount(max);
+        return vo;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackTxnResultVO resumeOffFlow(Long lotId, String remark) {
+        MesLot lot = requireExecutableLot(lotId);
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(isOffFlow(lot), "不在 Off-Flow 中");
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅旁路等待状态可回主路径，加工中请先完工");
+        AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知");
+        AssertUtil.isTrue(routeEdgeResolver.isOffFlowTerminal(lot.getRouteVersionId(), lot.getCurrentSortNo()),
+                "仅旁路末站可回主路径");
+
+        String fromStatus = lot.getStatus();
+        Integer fromSortNo = lot.getCurrentSortNo();
+        Long fromEqpId = lot.getCurrentEqpId();
+        return doResumeOffFlow(lot, fromStatus, fromSortNo, fromEqpId, false, remark);
+    }
+
+    /**
+     * Off-Flow 回主路径：Lot 回到进入时锚点站，尝试恢复锚点状态/机台。
+     * 锚点机台不可用或已被别批占用时降级为 wait；viaTrackOut=true 表示旁路末站 TrackOut 自动触发。
+     */
+    private TrackTxnResultVO doResumeOffFlow(MesLot lot, String fromStatus, Integer fromSortNo,
+                                             Long fromEqpId, boolean viaTrackOut, String remark) {
+        AssertUtil.isTrue(isOffFlow(lot), "不在 Off-Flow 中");
+        AssertUtil.notNull(lot.getOffFlowAnchorSort(), "Off-Flow 锚点缺失");
+
+        MesRouteStep anchor = routeEdgeResolver.findStep(lot.getRouteVersionId(), lot.getOffFlowAnchorSort());
+        AssertUtil.notNull(anchor, "Off-Flow 锚点站不存在");
+
+        String restoreStatus = StringUtils.hasText(lot.getOffFlowAnchorStatus())
+                ? lot.getOffFlowAnchorStatus() : STATUS_WAIT;
+        AssertUtil.isTrue(STATUS_WAIT.equals(restoreStatus) || STATUS_PROCESSING.equals(restoreStatus),
+                "Off-Flow 锚点状态异常");
+        Long restoreEqp = STATUS_PROCESSING.equals(restoreStatus) ? lot.getOffFlowAnchorEqpId() : null;
+        Integer anchorSort = lot.getOffFlowAnchorSort();
+        boolean degraded = false;
+
+        if (STATUS_PROCESSING.equals(restoreStatus) && restoreEqp != null) {
+            try {
+                mesEqpService.assertUsable(restoreEqp);
+            } catch (BusinessException ex) {
+                restoreStatus = STATUS_WAIT;
+                restoreEqp = null;
+                degraded = true;
+            }
+            if (!degraded) {
+                MesLot other = mesLotMapper.selectOne(new LambdaQueryWrapper<MesLot>()
+                        .eq(MesLot::getCurrentEqpId, restoreEqp)
+                        .eq(MesLot::getStatus, STATUS_PROCESSING)
+                        .ne(MesLot::getId, lot.getId())
+                        .last("LIMIT 1"));
+                if (other != null) {
+                    restoreStatus = STATUS_WAIT;
+                    restoreEqp = null;
+                    degraded = true;
+                }
+            }
+        }
+
+        clearOffFlow(lot);
+        lot.setStatus(restoreStatus);
+        lot.setCurrentSortNo(anchor.getSortNo());
+        lot.setCurrentStepId(anchor.getStepId());
+        lot.setCurrentEqpId(restoreEqp);
+        lot.setUpdateBy(StpUtil.getLoginIdAsLong());
+        int rows = mesLotMapper.updateById(lot);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
+
+        String logRemark = StringUtils.hasText(remark) ? remark.trim() : null;
+        JSONObject ext = new JSONObject();
+        ext.set("fromSortNo", fromSortNo);
+        ext.set("anchorSortNo", anchorSort);
+        ext.set("restoredStatus", restoreStatus);
+        if (restoreEqp != null) {
+            ext.set("restoredEqpId", String.valueOf(restoreEqp));
+        }
+        if (degraded) {
+            ext.set("degraded", true);
+        }
+        if (viaTrackOut) {
+            ext.set("viaTrackOut", true);
+        }
+
+        writeTxLog(lot, TX_OFF_FLOW_RESUME, fromStatus, restoreStatus, fromSortNo, anchor.getSortNo(),
+                anchor.getStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, ext.toString());
+
+        return toTxnVo(lot, TX_OFF_FLOW_RESUME, false);
+    }
+
+    /** 现场台上下文：当前站 + 默认下一站 + 可选分支/回流/跳站/Off-Flow 列表 */
     @Override
     public TrackContextVO context(Long lotId) {
         MesLot lot = mesLotMapper.selectById(lotId);
@@ -404,8 +588,13 @@ public class TrackServiceImpl implements TrackService {
         vo.setReworkOptions(Collections.emptyList());
         vo.setBranchOptions(Collections.emptyList());
         vo.setSkipOptions(Collections.emptyList());
+        vo.setOffFlowOptions(Collections.emptyList());
         vo.setCanRework(false);
         vo.setCanSkip(false);
+        vo.setCanEnterOffFlow(false);
+        vo.setCanResumeOffFlow(false);
+        vo.setOffFlow(isOffFlow(lot));
+        vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
 
         if (lot.getRouteVersionId() != null) {
@@ -484,13 +673,14 @@ public class TrackServiceImpl implements TrackService {
                 options.add(opt);
             }
             vo.setReworkOptions(options);
-            boolean statusOk = STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus());
+            boolean statusOk = !isOffFlow(lot)
+                    && (STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus()));
             vo.setCanRework(statusOk && !options.isEmpty() && StpUtil.hasPermission("track:rework"));
         }
 
         List<MesRouteEdge> skipEdges = routeEdgeResolver.listSkip(
                 lot.getRouteVersionId(), lot.getCurrentSortNo());
-        if (!skipEdges.isEmpty()) {
+        if (!skipEdges.isEmpty() && !isOffFlow(lot)) {
             Set<Integer> toSorts = skipEdges.stream().map(MesRouteEdge::getToSortNo).collect(Collectors.toSet());
             Map<Integer, MesRouteStep> stepBySort = routeEdgeResolver.mapRouteStepsBySort(
                     lot.getRouteVersionId(), toSorts);
@@ -533,6 +723,59 @@ public class TrackServiceImpl implements TrackService {
             vo.setCanSkip(STATUS_WAIT.equals(lot.getStatus())
                     && !skipOptions.isEmpty()
                     && StpUtil.hasPermission("track:skip"));
+        }
+
+        // 主路径：组装可进 Off-Flow 的旁路入口；已在旁路：只算能否 Resume
+        if (!isOffFlow(lot)) {
+            List<MesRouteEdge> offEdges = routeEdgeResolver.listOffFlow(
+                    lot.getRouteVersionId(), lot.getCurrentSortNo());
+            if (!offEdges.isEmpty()) {
+                Set<Integer> toSorts = offEdges.stream().map(MesRouteEdge::getToSortNo).collect(Collectors.toSet());
+                Map<Integer, MesRouteStep> stepBySort = routeEdgeResolver.mapRouteStepsBySort(
+                        lot.getRouteVersionId(), toSorts);
+                Map<Long, MesStep> stepMap = routeEdgeResolver.mapStepsById(
+                        stepBySort.values().stream().map(MesRouteStep::getStepId).collect(Collectors.toSet()));
+                List<TrackOffFlowOptionVO> offOptions = new ArrayList<>();
+                int used = offFlowCountStore.get(lot, lot.getCurrentSortNo());
+                for (MesRouteEdge edge : offEdges) {
+                    int max = edge.getMaxReworkCount() != null ? edge.getMaxReworkCount() : 1;
+                    int remain = Math.max(0, max - used);
+                    if (remain <= 0) {
+                        continue;
+                    }
+                    TrackOffFlowOptionVO opt = new TrackOffFlowOptionVO();
+                    opt.setToSortNo(edge.getToSortNo());
+                    opt.setMaxOffFlowCount(max);
+                    opt.setRemainCount(remain);
+                    if (StringUtils.hasText(edge.getReasonCodes())) {
+                        opt.setReasonCodes(Arrays.stream(edge.getReasonCodes().split(","))
+                                .map(String::trim)
+                                .filter(StringUtils::hasText)
+                                .toList());
+                    } else {
+                        opt.setReasonCodes(Collections.emptyList());
+                    }
+                    MesRouteStep target = stepBySort.get(edge.getToSortNo());
+                    if (target != null) {
+                        MesStep step = stepMap.get(target.getStepId());
+                        if (step != null) {
+                            opt.setToStepCode(step.getStepCode());
+                            opt.setToStepName(step.getStepName());
+                        }
+                    }
+                    offOptions.add(opt);
+                }
+                vo.setOffFlowOptions(offOptions);
+                boolean statusOk = STATUS_WAIT.equals(lot.getStatus()) || STATUS_PROCESSING.equals(lot.getStatus());
+                vo.setCanEnterOffFlow(statusOk && !offOptions.isEmpty()
+                        && StpUtil.hasPermission("track:off-flow"));
+            }
+        } else {
+            // 旁路末站 + wait + 有权限 → 可回主路径
+            boolean terminal = routeEdgeResolver.isOffFlowTerminal(
+                    lot.getRouteVersionId(), lot.getCurrentSortNo());
+            vo.setCanResumeOffFlow(STATUS_WAIT.equals(lot.getStatus()) && terminal
+                    && StpUtil.hasPermission("track:off-flow"));
         }
         return vo;
     }
@@ -661,7 +904,21 @@ public class TrackServiceImpl implements TrackService {
         vo.setCurrentEqpId(lot.getCurrentEqpId());
         vo.setRouteVersionId(lot.getRouteVersionId());
         vo.setCompleted(completed);
+        vo.setOffFlow(isOffFlow(lot));
         return vo;
+    }
+
+    /** 是否批次是否在off-flow */
+    private static boolean isOffFlow(MesLot lot) {
+        return Integer.valueOf(1).equals(lot.getOffFlow());
+    }
+
+    private static void clearOffFlow(MesLot lot) {
+        lot.setOffFlow(0);
+        lot.setOffFlowAnchorSort(null);
+        lot.setOffFlowAnchorStepId(null);
+        lot.setOffFlowAnchorEqpId(null);
+        lot.setOffFlowAnchorStatus(null);
     }
 
     /** 写履历；extJson 放分支/回流结构化字段，remark 只留人工备注 */

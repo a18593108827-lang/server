@@ -65,6 +65,8 @@ public class MesRouteServiceImpl implements MesRouteService {
     public static final String EDGE_BRANCH = com.mes.route.support.RouteEdgeTypes.BRANCH;
     /** 跳站白名单边：Track 走 /track/skip */
     public static final String EDGE_SKIP_ALLOW = com.mes.route.support.RouteEdgeTypes.SKIP_ALLOW;
+    /** 临时离线边：Track 走 /track/off-flow */
+    public static final String EDGE_OFF_FLOW = com.mes.route.support.RouteEdgeTypes.OFF_FLOW;
 
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
@@ -330,6 +332,7 @@ public class MesRouteServiceImpl implements MesRouteService {
         validateNormalAndBranchRules(steps, edges); // 每站 1 条 normal、branch 条件不重复
         validateReworkCanReachMainEnd(steps, edges); // 回流目标沿 next 必须能走到终点
         validateSkipAllowRules(steps, edges); // 跳站前向可达 + allow_skip
+        validateOffFlowRules(steps, edges); // Off-Flow 主/旁路不相交
 
         // 旧版进行归档处理（修改状态）
         mesRouteVersionMapper.update(null, new LambdaUpdateWrapper<MesRouteVersion>()
@@ -500,7 +503,8 @@ public class MesRouteServiceImpl implements MesRouteService {
             AssertUtil.notBlank(edge.getEdgeType(), "边类型不能为空");
             String type = edge.getEdgeType().trim().toLowerCase();
             AssertUtil.isTrue(EDGE_BRANCH.equals(type) || EDGE_REWORK.equals(type)
-                            || EDGE_NORMAL.equals(type) || EDGE_SKIP_ALLOW.equals(type),
+                            || EDGE_NORMAL.equals(type) || EDGE_SKIP_ALLOW.equals(type)
+                            || EDGE_OFF_FLOW.equals(type),
                     "不支持的边类型: " + type);
             AssertUtil.isTrue(sortNos.contains(edge.getFromSortNo()),
                     "边起点顺序号不存在: " + edge.getFromSortNo());
@@ -524,6 +528,11 @@ public class MesRouteServiceImpl implements MesRouteService {
             if (EDGE_SKIP_ALLOW.equals(type)) {
                 AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "跳站边不能配置条件码");
                 AssertUtil.isTrue(edge.getMaxReworkCount() == null, "跳站边不能配置回流次数");
+            }
+            if (EDGE_OFF_FLOW.equals(type)) {
+                AssertUtil.notNull(edge.getMaxReworkCount(), "Off-Flow 边须配置次数上限");
+                AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "Off-Flow 次数上限须≥1");
+                AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "Off-Flow 边不能配置条件码");
             }
             if (EDGE_NORMAL.equals(type)) {
                 AssertUtil.isTrue(!StringUtils.hasText(edge.getConditionCode()), "默认边不能配置条件码");
@@ -552,6 +561,12 @@ public class MesRouteServiceImpl implements MesRouteService {
             if (EDGE_SKIP_ALLOW.equals(edge.getEdgeType())) {
                 AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
                         "跳站边不能指向自身");
+            }
+            if (EDGE_OFF_FLOW.equals(edge.getEdgeType())) {
+                AssertUtil.notNull(edge.getMaxReworkCount(), "Off-Flow 边须配置次数上限");
+                AssertUtil.isTrue(edge.getMaxReworkCount() >= 1, "Off-Flow 次数上限须≥1");
+                AssertUtil.isFalse(Objects.equals(edge.getFromSortNo(), edge.getToSortNo()),
+                        "Off-Flow 边不能指向自身");
             }
         }
     }
@@ -672,6 +687,56 @@ public class MesRouteServiceImpl implements MesRouteService {
                 AssertUtil.isTrue(Integer.valueOf(1).equals(step.getAllowSkip()),
                         "跳站路径含不可跳站: sortNo=" + sortNo);
             }
+        }
+    }
+
+    /**
+     * Off-Flow：from 在主路径；to 及旁路链不与主路径相交；旁路无环且有末站。
+     */
+    private void validateOffFlowRules(List<MesRouteStep> steps, List<MesRouteEdge> edges) {
+        Map<Integer, Integer> nextMap = new HashMap<>();
+        Integer start = null;
+        for (MesRouteStep step : steps) {
+            nextMap.put(step.getSortNo(), step.getNextSortNo());
+            if (start == null || step.getSortNo() < start) {
+                start = step.getSortNo();
+            }
+        }
+        Set<Integer> mainPath = new HashSet<>();
+        Integer cur = start;
+        while (cur != null && mainPath.add(cur)) {
+            cur = nextMap.get(cur);
+        }
+
+        Set<String> offTargets = new HashSet<>();
+        for (MesRouteEdge edge : edges) {
+            if (!EDGE_OFF_FLOW.equals(edge.getEdgeType())) {
+                continue;
+            }
+            String tk = edge.getFromSortNo() + "-" + edge.getToSortNo();
+            AssertUtil.isTrue(offTargets.add(tk),
+                    "同站 Off-Flow 目标重复: " + edge.getFromSortNo() + "→" + edge.getToSortNo());
+            AssertUtil.isTrue(mainPath.contains(edge.getFromSortNo()),
+                    "Off-Flow 触发站须在主路径: " + edge.getFromSortNo());
+            AssertUtil.isFalse(mainPath.contains(edge.getToSortNo()),
+                    "Off-Flow 入口不能在主路径: " + edge.getToSortNo());
+            AssertUtil.isFalse(Objects.equals(edge.getToSortNo(), start),
+                    "Off-Flow 入口不能是路线起点");
+
+            List<Integer> chain = new ArrayList<>();
+            Set<Integer> visited = new HashSet<>();
+            Integer walk = edge.getToSortNo();
+            while (walk != null) {
+                AssertUtil.isTrue(nextMap.containsKey(walk),
+                        "Off-Flow 旁路站不存在: " + walk);
+                AssertUtil.isTrue(visited.add(walk),
+                        "Off-Flow 旁路成环: " + edge.getToSortNo());
+                AssertUtil.isFalse(mainPath.contains(walk),
+                        "Off-Flow 旁路与主路径相交: sortNo=" + walk);
+                chain.add(walk);
+                walk = nextMap.get(walk);
+            }
+            AssertUtil.isFalse(chain.isEmpty(), "Off-Flow 旁路为空");
         }
     }
 

@@ -53,6 +53,24 @@ public class MesLot extends BaseEntity {
     /** 按触发站累计返工次数 JSON，如 {"60":1} */
     private String reworkCounts;
 
+    /** 是否在 Temporary Off-Flow 中：0/1 */
+    private Integer offFlow;
+
+    /** Off-Flow 锚点站序 */
+    private Integer offFlowAnchorSort;
+
+    /** Off-Flow 锚点工序 */
+    private Long offFlowAnchorStepId;
+
+    /** Off-Flow 锚点机台 */
+    private Long offFlowAnchorEqpId;
+
+    /** Off-Flow 锚点状态 wait/processing */
+    private String offFlowAnchorStatus;
+
+    /** 按触发站累计 Off-Flow 次数 JSON，如 {"30":1} */
+    private String offFlowCounts;
+
     /**
      * 状态：created 已创建 / released 已放行(过渡) / wait 等待加工 /
      * processing 加工中 / held 锁批 / completed 已完工 / scrapped 已报废
