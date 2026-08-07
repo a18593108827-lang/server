@@ -1,6 +1,7 @@
 package com.mes.track.service.impl;
 
 import cn.dev33.satoken.stp.StpUtil;
+import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.common.AssertUtil;
@@ -13,6 +14,8 @@ import com.mes.hold.service.FutureHoldService;
 import com.mes.hold.service.HoldService;
 import com.mes.hold.service.impl.FutureHoldServiceImpl;
 import com.mes.lot.entity.MesLot;
+import com.mes.lot.entity.MesLotGenealogy;
+import com.mes.lot.mapper.MesLotGenealogyMapper;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.lot.vo.MesLotStepVO;
 import com.mes.recipe.facade.RecipeFacade;
@@ -32,6 +35,7 @@ import com.mes.route.support.RouteTrackOutDecision;
 import com.mes.route.support.StepEqpTypeGuard;
 import com.mes.system.entity.SysUser;
 import com.mes.system.mapper.SysUserMapper;
+import com.mes.track.dto.TrackSplitChildDTO;
 import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
 import com.mes.track.service.TrackService;
@@ -41,10 +45,13 @@ import com.mes.track.support.ReworkCountStore;
 import com.mes.track.vo.MesTxLogVO;
 import com.mes.track.vo.TrackBranchOptionVO;
 import com.mes.track.vo.TrackContextVO;
+import com.mes.track.vo.TrackMergeCandidateVO;
+import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackOffFlowOptionVO;
 import com.mes.track.vo.TrackReleaseResultVO;
 import com.mes.track.vo.TrackReworkOptionVO;
 import com.mes.track.vo.TrackSkipOptionVO;
+import com.mes.track.vo.TrackSplitResultVO;
 import com.mes.track.vo.TrackTxnResultVO;
 import com.mes.wip.service.WipProjectionService;
 import lombok.RequiredArgsConstructor;
@@ -53,13 +60,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -73,6 +74,7 @@ public class TrackServiceImpl implements TrackService {
     public static final String STATUS_WAIT = "wait";
     public static final String STATUS_PROCESSING = "processing";
     public static final String STATUS_COMPLETED = "completed";
+    public static final String STATUS_MERGED = "merged"; // 合批终态，不可再 Track
     public static final String ROUTE_ACTIVE = "active";
 
     public static final String TX_RELEASE = "RELEASE";
@@ -82,8 +84,11 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_SKIP = "SKIP";
     public static final String TX_OFF_FLOW = "OFF_FLOW";
     public static final String TX_OFF_FLOW_RESUME = "OFF_FLOW_RESUME";
+    public static final String TX_SPLIT = "SPLIT";
+    public static final String TX_MERGE = "MERGE"; // 合批事务类型
 
     private final MesLotMapper mesLotMapper;
+    private final MesLotGenealogyMapper mesLotGenealogyMapper;
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
     private final MesRouteStepMapper mesRouteStepMapper;
@@ -174,6 +179,7 @@ public class TrackServiceImpl implements TrackService {
         dispatchService.assertReserveMatch(lotId, eqpId);// 预约匹配
         dispatchService.assertNotOffFlowAnchored(eqpId, lotId);// Off-Flow 锚点占台
         AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅等待加工状态可开工");
+        AssertUtil.isTrue(lot.getQty() != null && lot.getQty() >= 1, "数量为0不可开工");
         AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法开工");
         AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
 
@@ -198,6 +204,369 @@ public class TrackServiceImpl implements TrackService {
         dispatchService.consumeOnTrackIn(lotId, eqpId, txId);// 消耗预约
 
         return toTxnVo(lot, TX_TRACK_IN, false);
+    }
+
+    /**
+     * 分批：把一批拆成多批
+     * 父 Lot 保留余量，按 qty 建子 Lot；子继承 Route 快照与当前站，写谱系 + tx_log。
+     * 仅 wait、非 Hold、非 Off-Flow；数量守恒。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackSplitResultVO split(Long parentLotId, List<TrackSplitChildDTO> children,
+                                    String reasonCode, String remark) {
+        AssertUtil.notNull(parentLotId, "父批次不能为空");
+        AssertUtil.isTrue(children != null && !children.isEmpty(), "子批次列表不能为空");
+
+        MesLot parent = requireExecutableLot(parentLotId);
+        holdService.assertNoActive(parentLotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(parent.getStatus()), "仅等待加工状态可分批");
+        AssertUtil.isTrue(!isOffFlow(parent), "Off-Flow 中不可分批");
+        AssertUtil.notNull(parent.getCurrentSortNo(), "当前站未知，无法分批");
+        AssertUtil.isTrue(parent.getQty() != null && parent.getQty() >= 1, "父批数量不足");
+
+        int sumChild = 0;
+        for (TrackSplitChildDTO child : children) {
+            AssertUtil.notNull(child.getQty(), "子批数量不能为空");
+            AssertUtil.isTrue(child.getQty() >= 1, "子批数量至少为1");
+            sumChild += child.getQty();
+        }
+        AssertUtil.isTrue(sumChild <= parent.getQty(), "子批数量之和不能超过父批");
+
+        int qtyBefore = parent.getQty();
+        int qtyAfter = qtyBefore - sumChild;
+        String fromStatus = parent.getStatus();
+        Integer fromSortNo = parent.getCurrentSortNo();
+        long userId = StpUtil.getLoginIdAsLong();
+
+        List<TrackSplitResultVO.LotBrief> childBriefs = new ArrayList<>(children.size());
+        cn.hutool.json.JSONArray childArr = new cn.hutool.json.JSONArray();
+        int seqBase = nextChildSeqBase(parent.getLotNo());
+
+        for (int i = 0; i < children.size(); i++) {
+            TrackSplitChildDTO req = children.get(i);
+            String childNo = blankToNull(req.getLotNo());
+            if (childNo == null) {
+                childNo = parent.getLotNo() + "." + String.format("%02d", seqBase + i);
+                Long exists = mesLotMapper.selectCount(new LambdaQueryWrapper<MesLot>()
+                        .eq(MesLot::getLotNo, childNo));
+                AssertUtil.isTrue(exists == 0, "批次号已存在: " + childNo);
+            } else {
+                Long exists = mesLotMapper.selectCount(new LambdaQueryWrapper<MesLot>()
+                        .eq(MesLot::getLotNo, childNo));
+                AssertUtil.isTrue(exists == 0, "批次号已存在: " + childNo);
+            }
+
+            MesLot child = new MesLot();
+            child.setLotNo(childNo);
+            child.setProductCode(parent.getProductCode());
+            child.setQty(req.getQty());
+            child.setScrapQty(0);
+            child.setPriority(parent.getPriority());
+            child.setHotFlag(parent.getHotFlag() != null ? parent.getHotFlag() : 0);
+            child.setCustomerLot(parent.getCustomerLot());
+            child.setParentLotId(parent.getId());
+            child.setRouteId(parent.getRouteId());
+            child.setRouteVersionId(parent.getRouteVersionId());
+            child.setCurrentSortNo(parent.getCurrentSortNo());
+            child.setCurrentStepId(parent.getCurrentStepId());
+            child.setCurrentEqpId(null);
+            child.setReworkCounts(null);
+            child.setOffFlowCounts(null);
+            clearOffFlow(child);
+            child.setQtimeFromSort(null);
+            child.setQtimeToSort(null);
+            child.setQtimeStartedAt(null);
+            child.setQtimeMaxMin(null);
+            child.setQtimeOnViolate(null);
+            child.setStatus(STATUS_WAIT);
+            child.setRemark(null);
+            child.setVersion(0);
+            child.setCreateBy(userId);
+            child.setUpdateBy(userId);
+            mesLotMapper.insert(child);
+            wipProjectionService.syncFromLot(child);
+
+            TrackSplitResultVO.LotBrief brief = new TrackSplitResultVO.LotBrief();
+            brief.setLotId(child.getId());
+            brief.setLotNo(child.getLotNo());
+            brief.setQty(child.getQty());
+            childBriefs.add(brief);
+
+            JSONObject item = new JSONObject();
+            item.set("lotId", child.getId());
+            item.set("lotNo", child.getLotNo());
+            item.set("qty", child.getQty());
+            childArr.add(item);
+        }
+
+        parent.setQty(qtyAfter);
+        parent.setUpdateBy(userId);
+        int rows = mesLotMapper.updateById(parent);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(parent);
+
+        JSONObject ext = new JSONObject();
+        ext.set("parentLotId", parent.getId());
+        ext.set("parentQtyBefore", qtyBefore);
+        ext.set("parentQtyAfter", qtyAfter);
+        ext.set("children", childArr);
+        if (StringUtils.hasText(reasonCode)) {
+            ext.set("reasonCode", reasonCode.trim());
+        }
+
+        Long txId = writeTxLog(parent, TX_SPLIT, fromStatus, STATUS_WAIT, fromSortNo, fromSortNo,
+                parent.getCurrentStepId(), null, parent.getRouteVersionId(),
+                StringUtils.hasText(remark) ? remark.trim() : "分批",
+                null, null, ext.toString());
+
+        for (TrackSplitResultVO.LotBrief brief : childBriefs) {
+            MesLotGenealogy gene = new MesLotGenealogy();
+            gene.setTxnType("split");
+            gene.setParentLotId(parent.getId());
+            gene.setChildLotId(brief.getLotId());
+            gene.setQty(brief.getQty());
+            gene.setTxId(txId);
+            gene.setReasonCode(StringUtils.hasText(reasonCode) ? reasonCode.trim() : null);
+            gene.setCreateBy(userId);
+            gene.setCreateTime(LocalDateTime.now());
+            mesLotGenealogyMapper.insert(gene);
+        }
+
+        TrackSplitResultVO.LotBrief parentBrief = new TrackSplitResultVO.LotBrief();
+        parentBrief.setLotId(parent.getId());
+        parentBrief.setLotNo(parent.getLotNo());
+        parentBrief.setQty(parent.getQty());
+
+        TrackSplitResultVO result = new TrackSplitResultVO();
+        result.setParent(parentBrief);
+        result.setChildren(childBriefs);
+        result.setTxId(txId);
+        return result;
+    }
+
+    /**
+     * 合批：把多个源 Lot 并入主 Lot。
+     * 主 Lot 保留号与站位，qty 累加；源 qty=0、status=merged、写 merged_to_lot_id。
+     * 须同产品 / route_version / 当前站；仅 wait、非 Hold、非 Off-Flow；数量守恒。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackMergeResultVO merge(Long mainLotId, List<Long> sourceLotIds,
+                                    String reasonCode, String remark) {
+        AssertUtil.notNull(mainLotId, "主批次不能为空");
+        AssertUtil.isTrue(sourceLotIds != null && !sourceLotIds.isEmpty(), "源批次列表不能为空");
+
+        // 去重且禁止主批出现在源列表
+        LinkedHashSet<Long> sourceIds = new LinkedHashSet<>();
+        for (Long id : sourceLotIds) {
+            AssertUtil.notNull(id, "源批次不能为空");
+            AssertUtil.isTrue(!Objects.equals(id, mainLotId), "源批次不能包含主批次");
+            sourceIds.add(id);
+        }
+        AssertUtil.isTrue(!sourceIds.isEmpty(), "源批次列表不能为空");
+
+        // 按 id 升序加行锁，避免多 Lot 合批死锁
+        TreeSet<Long> lockOrder = new TreeSet<>();
+        lockOrder.add(mainLotId);
+        lockOrder.addAll(sourceIds);
+        Map<Long, MesLot> locked = new HashMap<>();
+        for (Long id : lockOrder) {
+            MesLot row = mesLotMapper.selectOne(new LambdaQueryWrapper<MesLot>()
+                    .eq(MesLot::getId, id)
+                    .last("FOR UPDATE"));
+            AssertUtil.notNull(row, "批次不存在: " + id);
+            AssertUtil.notNull(row.getRouteVersionId(), "批次未放行: " + row.getLotNo());
+            locked.put(id, row);
+        }
+
+        MesLot main = locked.get(mainLotId);
+        holdService.assertNoActive(mainLotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(main.getStatus()), "仅等待加工状态可合批");
+        AssertUtil.isTrue(!isOffFlow(main), "Off-Flow 中不可合批");
+        AssertUtil.notNull(main.getCurrentSortNo(), "主批当前站未知，无法合批");
+        AssertUtil.isTrue(main.getQty() != null && main.getQty() >= 0, "主批数量非法");
+
+        int qtyBefore = main.getQty();
+        int sumSource = 0;
+        String fromStatus = main.getStatus();
+        Integer fromSortNo = main.getCurrentSortNo();
+        long userId = StpUtil.getLoginIdAsLong();
+
+        List<TrackMergeResultVO.MergedBrief> mergedBriefs = new ArrayList<>(sourceIds.size());
+        JSONArray sourceArr = new JSONArray();
+        List<MesLot> sources = new ArrayList<>(sourceIds.size());
+
+        for (Long sourceId : sourceIds) {
+            MesLot source = locked.get(sourceId);
+            holdService.assertNoActive(sourceId);
+            AssertUtil.isTrue(STATUS_WAIT.equals(source.getStatus()),
+                    "源批仅等待加工可合批: " + source.getLotNo());
+            AssertUtil.isTrue(!isOffFlow(source), "源批 Off-Flow 中不可合批: " + source.getLotNo());
+            AssertUtil.isTrue(source.getQty() != null && source.getQty() >= 1,
+                    "源批数量不足: " + source.getLotNo());
+            assertMergeCompatible(main, source);
+
+            sumSource += source.getQty();
+            sources.add(source);
+        }
+
+        // 主批累加数量
+        int qtyAfter = qtyBefore + sumSource;
+        main.setQty(qtyAfter);
+        main.setUpdateBy(userId);
+        int mainRows = mesLotMapper.updateById(main);
+        AssertUtil.isTrue(mainRows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(main);
+
+        // 源批闭合成 merged，并从 WIP 投影移除
+        for (MesLot source : sources) {
+            int mergedQty = source.getQty();
+            source.setQty(0);
+            source.setStatus(STATUS_MERGED);
+            source.setMergedToLotId(main.getId());
+            source.setUpdateBy(userId);
+            int rows = mesLotMapper.updateById(source);
+            AssertUtil.isTrue(rows > 0, "源批已被他人修改，请刷新后重试: " + source.getLotNo());
+            wipProjectionService.syncFromLot(source);
+
+            TrackMergeResultVO.MergedBrief brief = new TrackMergeResultVO.MergedBrief();
+            brief.setLotId(source.getId());
+            brief.setLotNo(source.getLotNo());
+            brief.setQtyMerged(mergedQty);
+            mergedBriefs.add(brief);
+
+            JSONObject item = new JSONObject();
+            item.set("lotId", source.getId());
+            item.set("lotNo", source.getLotNo());
+            item.set("qty", mergedQty);
+            sourceArr.add(item);
+        }
+
+        JSONObject ext = new JSONObject();
+        ext.set("mainLotId", main.getId());
+        ext.set("mainQtyBefore", qtyBefore);
+        ext.set("mainQtyAfter", qtyAfter);
+        ext.set("sources", sourceArr);
+        if (StringUtils.hasText(reasonCode)) {
+            ext.set("reasonCode", reasonCode.trim());
+        }
+
+        Long txId = writeTxLog(main, TX_MERGE, fromStatus, STATUS_WAIT, fromSortNo, fromSortNo,
+                main.getCurrentStepId(), null, main.getRouteVersionId(),
+                StringUtils.hasText(remark) ? remark.trim() : "合批",
+                null, null, ext.toString());
+
+        // 谱系：parent=主，child=源，每源一行
+        for (TrackMergeResultVO.MergedBrief brief : mergedBriefs) {
+            MesLotGenealogy gene = new MesLotGenealogy();
+            gene.setTxnType("merge");
+            gene.setParentLotId(main.getId());
+            gene.setChildLotId(brief.getLotId());
+            gene.setQty(brief.getQtyMerged());
+            gene.setTxId(txId);
+            gene.setReasonCode(StringUtils.hasText(reasonCode) ? reasonCode.trim() : null);
+            gene.setCreateBy(userId);
+            gene.setCreateTime(LocalDateTime.now());
+            mesLotGenealogyMapper.insert(gene);
+        }
+
+        TrackMergeResultVO.LotBrief mainBrief = new TrackMergeResultVO.LotBrief();
+        mainBrief.setLotId(main.getId());
+        mainBrief.setLotNo(main.getLotNo());
+        mainBrief.setQty(main.getQty());
+
+        TrackMergeResultVO result = new TrackMergeResultVO();
+        result.setMain(mainBrief);
+        result.setMerged(mergedBriefs);
+        result.setTxId(txId);
+        return result;
+    }
+
+    /**
+     * 可合入主批的候选：同产品/快照/站、wait、qty≥1，排除 Hold 与 Off-Flow。
+     */
+    @Override
+    public List<TrackMergeCandidateVO> mergeCandidates(Long mainLotId) {
+        AssertUtil.notNull(mainLotId, "主批次不能为空");
+        MesLot main = requireExecutableLot(mainLotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(main.getStatus()), "仅等待加工主批可查候选");
+        AssertUtil.notNull(main.getCurrentSortNo(), "主批当前站未知");
+
+        List<MesLot> rows = mesLotMapper.selectList(new LambdaQueryWrapper<MesLot>()
+                .eq(MesLot::getStatus, STATUS_WAIT)
+                .eq(MesLot::getRouteVersionId, main.getRouteVersionId())
+                .eq(MesLot::getCurrentSortNo, main.getCurrentSortNo())
+                .ne(MesLot::getId, mainLotId)
+                .ge(MesLot::getQty, 1)
+                .orderByAsc(MesLot::getLotNo));
+
+        List<TrackMergeCandidateVO> list = new ArrayList<>();
+        for (MesLot row : rows) {
+            if (isOffFlow(row)) {
+                continue;
+            }
+            if (!Objects.equals(row.getProductCode(), main.getProductCode())) {
+                continue;
+            }
+            if (!Objects.equals(row.getCurrentStepId(), main.getCurrentStepId())) {
+                continue;
+            }
+            if (holdService.hasActive(row.getId())) {
+                continue;
+            }
+            TrackMergeCandidateVO vo = new TrackMergeCandidateVO();
+            vo.setLotId(row.getId());
+            vo.setLotNo(row.getLotNo());
+            vo.setQty(row.getQty());
+            vo.setProductCode(row.getProductCode());
+            vo.setRouteVersionId(row.getRouteVersionId());
+            vo.setCurrentSortNo(row.getCurrentSortNo());
+            vo.setCurrentStepId(row.getCurrentStepId());
+            vo.setStatus(row.getStatus());
+            list.add(vo);
+        }
+        return list;
+    }
+
+    /** 合批同质校验：产品、工艺快照、当前站序与工序须一致 */
+    private void assertMergeCompatible(MesLot main, MesLot source) {
+        AssertUtil.isTrue(Objects.equals(main.getProductCode(), source.getProductCode()),
+                "产品不一致，不可合批: " + source.getLotNo());
+        AssertUtil.isTrue(Objects.equals(main.getRouteVersionId(), source.getRouteVersionId()),
+                "工艺快照不一致，不可合批: " + source.getLotNo());
+        AssertUtil.isTrue(Objects.equals(main.getCurrentSortNo(), source.getCurrentSortNo()),
+                "当前站不一致，不可合批: " + source.getLotNo());
+        AssertUtil.isTrue(Objects.equals(main.getCurrentStepId(), source.getCurrentStepId()),
+                "当前工序不一致，不可合批: " + source.getLotNo());
+    }
+
+    /** 计算子批号后缀起点：扫描已有 {parentLotNo}.NN，返回 max+1 */
+    private int nextChildSeqBase(String parentLotNo) {
+        String prefix = parentLotNo + ".";
+        List<MesLot> existing = mesLotMapper.selectList(new LambdaQueryWrapper<MesLot>()
+                .likeRight(MesLot::getLotNo, prefix));
+        int max = 0;
+        for (MesLot row : existing) {
+            String suffix = row.getLotNo().substring(prefix.length());
+            if (!StringUtils.hasText(suffix) || suffix.contains(".")) {
+                continue;
+            }
+            try {
+                max = Math.max(max, Integer.parseInt(suffix));
+            } catch (NumberFormatException ignored) {
+                // ignore
+            }
+        }
+        return max + 1;
+    }
+
+    /** 空白串转 null */
+    private static String blankToNull(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        return value.trim();
     }
 
     /**
@@ -614,7 +983,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setCurrentStepId(lot.getCurrentStepId());
         vo.setCurrentEqpId(lot.getCurrentEqpId());
         vo.setCompleted(STATUS_COMPLETED.equals(lot.getStatus()));
-        vo.setCanTrackIn(STATUS_WAIT.equals(lot.getStatus()));
+        vo.setCanTrackIn(STATUS_WAIT.equals(lot.getStatus()) && lot.getQty() != null && lot.getQty() >= 1);
         vo.setCanTrackOut(STATUS_PROCESSING.equals(lot.getStatus()));
         vo.setReworkOptions(Collections.emptyList());
         vo.setBranchOptions(Collections.emptyList());
@@ -624,6 +993,16 @@ public class TrackServiceImpl implements TrackService {
         vo.setCanSkip(false);
         vo.setCanEnterOffFlow(false);
         vo.setCanResumeOffFlow(false);
+        vo.setCanSplit(STATUS_WAIT.equals(lot.getStatus())
+                && !isOffFlow(lot)
+                && lot.getQty() != null && lot.getQty() >= 1
+                && lot.getRouteVersionId() != null
+                && StpUtil.hasPermission("track:split"));
+        vo.setCanMerge(STATUS_WAIT.equals(lot.getStatus())
+                && !isOffFlow(lot)
+                && lot.getRouteVersionId() != null
+                && lot.getCurrentSortNo() != null
+                && StpUtil.hasPermission("track:merge"));
         vo.setOffFlow(isOffFlow(lot));
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);

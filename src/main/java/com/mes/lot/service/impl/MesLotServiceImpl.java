@@ -9,10 +9,13 @@ import com.mes.lot.dto.MesLotCreateDTO;
 import com.mes.lot.dto.MesLotQuery;
 import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.entity.MesLot;
+import com.mes.lot.entity.MesLotGenealogy;
+import com.mes.lot.mapper.MesLotGenealogyMapper;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.lot.mapper.MesLotNoSeqMapper;
 import com.mes.lot.service.MesLotService;
 import com.mes.lot.vo.MesLotCreateResultVO;
+import com.mes.lot.vo.MesLotGenealogyNodeVO;
 import com.mes.lot.vo.MesLotStepVO;
 import com.mes.lot.vo.MesLotVO;
 import com.mes.route.entity.MesRoute;
@@ -34,7 +37,9 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -60,6 +65,7 @@ public class MesLotServiceImpl implements MesLotService {
     private static final DateTimeFormatter LOT_DAY = DateTimeFormatter.BASIC_ISO_DATE;
 
     private final MesLotMapper mesLotMapper;
+    private final MesLotGenealogyMapper mesLotGenealogyMapper;
     private final MesLotNoSeqMapper mesLotNoSeqMapper;
     private final MesRouteMapper mesRouteMapper;
     private final MesRouteVersionMapper mesRouteVersionMapper;
@@ -126,7 +132,9 @@ public class MesLotServiceImpl implements MesLotService {
         lot.setLotNo(lotNo);
         lot.setProductCode(blankToNull(dto.getProductCode()));
         lot.setQty(dto.getQty());
+        lot.setScrapQty(0);
         lot.setPriority(priority);
+        lot.setHotFlag(0);
         lot.setCustomerLot(blankToNull(dto.getCustomerLot()));
         lot.setRouteId(dto.getRouteId());
         lot.setRouteVersionId(null);
@@ -179,10 +187,14 @@ public class MesLotServiceImpl implements MesLotService {
             // 已放行/在途：禁止改路线（route_version_id 始终不可通过本接口改）
             AssertUtil.isFalse(dto.getRouteId() != null && !Objects.equals(dto.getRouteId(), lot.getRouteId()),
                     "已放行不可修改路线");
+            AssertUtil.isFalse(dto.getQty() != null && !Objects.equals(dto.getQty(), lot.getQty()),
+                    "数量变更请走 Split/Merge/Scrap/Bonus 事务");
         }
 
         lot.setProductCode(blankToNull(dto.getProductCode()));
-        lot.setQty(dto.getQty());
+        if (STATUS_CREATED.equals(lot.getStatus())) {
+            lot.setQty(dto.getQty());
+        }
         lot.setPriority(dto.getPriority());
         lot.setCustomerLot(blankToNull(dto.getCustomerLot()));
         lot.setRemark(blankToNull(dto.getRemark()));
@@ -197,6 +209,97 @@ public class MesLotServiceImpl implements MesLotService {
     public void release(Long id) {
         // 兼容入口：逻辑收敛到 Track
         trackService.release(id);
+    }
+
+    /**
+     * 谱系树：先向下展开子批，再向上挂祖先（both 时祖先链保留当前节点的子孙）。
+     * @param direction up / down / both（默认 both）
+     * @param depth 最大层数，默认 5，上限 20
+     */
+    @Override
+    public MesLotGenealogyNodeVO genealogy(Long lotId, String direction, Integer depth) {
+        MesLot root = mesLotMapper.selectById(lotId);
+        AssertUtil.notNull(root, "批次不存在");
+        int maxDepth = depth == null || depth <= 0 ? 5 : Math.min(depth, 20);// 默认 5 层, 上限 20
+        String dir = direction == null ? "both" : direction.trim().toLowerCase(Locale.ROOT);
+
+        MesLotGenealogyNodeVO node = toGeneNode(root, null, null);
+        // 递归向下展开树节点
+        if ("down".equals(dir) || "both".equals(dir)) {
+            fillDown(node, maxDepth, 0);
+        }
+        // 递归向上展开树节点
+        if ("up".equals(dir) || "both".equals(dir)) {
+            node = buildUp(node, maxDepth);
+        }
+        return node;
+    }
+
+    /** 沿 split/merge 边向上包一层祖先，最多 maxDepth 层 */
+    private MesLotGenealogyNodeVO buildUp(MesLotGenealogyNodeVO current, int maxDepth) {
+        MesLotGenealogyNodeVO cursor = current;
+        Set<Long> visited = new HashSet<>();
+        visited.add(current.getLotId());
+        for (int i = 0; i < maxDepth; i++) {
+            MesLotGenealogy edge = mesLotGenealogyMapper.selectOne(new LambdaQueryWrapper<MesLotGenealogy>()
+                    .eq(MesLotGenealogy::getChildLotId, cursor.getLotId())
+                    .in(MesLotGenealogy::getTxnType, "split", "merge")
+                    .orderByDesc(MesLotGenealogy::getCreateTime)
+                    .last("LIMIT 1"));
+            if (edge == null) {
+                break;
+            }
+            if (!visited.add(edge.getParentLotId())) {
+                break;
+            }
+            MesLot parent = mesLotMapper.selectById(edge.getParentLotId());
+            if (parent == null) {
+                break;
+            }
+            MesLotGenealogyNodeVO parentNode = toGeneNode(parent, edge.getTxnType(), edge.getCreateTime());
+            parentNode.setChildren(List.of(cursor));
+            cursor = parentNode;
+        }
+        return cursor;
+    }
+
+    /** 递归填充 split/merge 子节点 */
+    private void fillDown(MesLotGenealogyNodeVO node, int maxDepth, int level) {
+        if (level >= maxDepth) {
+            node.setChildren(Collections.emptyList());
+            return;
+        }
+        List<MesLotGenealogy> edges = mesLotGenealogyMapper.selectList(new LambdaQueryWrapper<MesLotGenealogy>()
+                .eq(MesLotGenealogy::getParentLotId, node.getLotId())
+                .in(MesLotGenealogy::getTxnType, "split", "merge")
+                .orderByAsc(MesLotGenealogy::getCreateTime));
+        if (edges.isEmpty()) {
+            node.setChildren(Collections.emptyList());
+            return;
+        }
+        List<MesLotGenealogyNodeVO> kids = new ArrayList<>(edges.size());
+        for (MesLotGenealogy edge : edges) {
+            MesLot child = mesLotMapper.selectById(edge.getChildLotId());
+            if (child == null) {
+                continue;
+            }
+            MesLotGenealogyNodeVO childNode = toGeneNode(child, edge.getTxnType(), edge.getCreateTime());
+            fillDown(childNode, maxDepth, level + 1);
+            kids.add(childNode);
+        }
+        node.setChildren(kids);
+    }
+
+    /** Lot → 谱系节点（txnType/txnTime 来自 genealogy 边，根节点可空） */
+    private static MesLotGenealogyNodeVO toGeneNode(MesLot lot, String txnType, java.time.LocalDateTime txnTime) {
+        MesLotGenealogyNodeVO node = new MesLotGenealogyNodeVO();
+        node.setLotId(lot.getId());
+        node.setLotNo(lot.getLotNo());
+        node.setQty(lot.getQty());
+        node.setStatus(lot.getStatus());
+        node.setTxnType(txnType);
+        node.setTxnTime(txnTime);
+        return node;
     }
 
     private static boolean isEditableStatus(String status) {
@@ -263,8 +366,12 @@ public class MesLotServiceImpl implements MesLotService {
         vo.setLotNo(lot.getLotNo());
         vo.setProductCode(lot.getProductCode());
         vo.setQty(lot.getQty());
+        vo.setScrapQty(lot.getScrapQty());
         vo.setPriority(lot.getPriority());
+        vo.setHotFlag(lot.getHotFlag());
         vo.setCustomerLot(lot.getCustomerLot());
+        vo.setParentLotId(lot.getParentLotId());
+        vo.setMergedToLotId(lot.getMergedToLotId());
         vo.setRouteId(lot.getRouteId());
         vo.setRouteVersionId(lot.getRouteVersionId());
         vo.setCurrentSortNo(lot.getCurrentSortNo());

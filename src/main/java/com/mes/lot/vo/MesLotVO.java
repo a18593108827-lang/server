@@ -12,9 +12,17 @@ public class MesLotVO {
     private String lotNo;
     private String productCode;
     private Integer qty;
+    /** 累计报废数量 */
+    private Integer scrapQty;
     /** 优先级 1–100，越大越急 */
     private Integer priority;
+    /** Hot Lot：0/1 */
+    private Integer hotFlag;
     private String customerLot;
+    /** 直系父 Lot（Split 产生） */
+    private Long parentLotId;
+    /** 合批后指向的主 Lot */
+    private Long mergedToLotId;
     private Long routeId;
     private String routeCode;
     private String routeName;

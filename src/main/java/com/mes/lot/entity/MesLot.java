@@ -31,11 +31,23 @@ public class MesLot extends BaseEntity {
     /** 数量 */
     private Integer qty;
 
+    /** 累计报废数量 */
+    private Integer scrapQty;
+
     /** 优先级：1–100，越大越急，默认 50 */
     private Integer priority;
 
+    /** Hot Lot：0/1 */
+    private Integer hotFlag;
+
     /** 客户侧批次号（对外对账/追溯，可空） */
     private String customerLot;
+
+    /** 直系父 Lot（Split 子批） */
+    private Long parentLotId;
+
+    /** 合批后指向的主 Lot */
+    private Long mergedToLotId;
 
     /** 目标/已绑工艺路线 ID */
     private Long routeId;
@@ -90,7 +102,7 @@ public class MesLot extends BaseEntity {
 
     /**
      * 状态：created 已创建 / released 已放行(过渡) / wait 等待加工 /
-     * processing 加工中 / held 锁批 / completed 已完工 / scrapped 已报废
+     * processing 加工中 / held 锁批 / completed 已完工 / scrapped 已报废 / merged 已合批
      */
     private String status;
 

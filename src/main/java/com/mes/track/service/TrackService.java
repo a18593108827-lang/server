@@ -1,7 +1,11 @@
 package com.mes.track.service;
 
+import com.mes.track.dto.TrackSplitChildDTO;
 import com.mes.track.vo.TrackContextVO;
+import com.mes.track.vo.TrackMergeCandidateVO;
+import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackReleaseResultVO;
+import com.mes.track.vo.TrackSplitResultVO;
 import com.mes.track.vo.TrackTxnResultVO;
 import com.mes.track.vo.MesTxLogVO;
 
@@ -15,6 +19,15 @@ public interface TrackService {
 
     /** 开工：wait → processing */
     TrackTxnResultVO trackIn(Long lotId, Long eqpId);
+
+    /** 分批：父保留余量，子继承快照与当前站 */
+    TrackSplitResultVO split(Long parentLotId, List<TrackSplitChildDTO> children, String reasonCode, String remark);
+
+    /** 合批：主 qty 累加，源 → merged；须同产品/快照/站 */
+    TrackMergeResultVO merge(Long mainLotId, List<Long> sourceLotIds, String reasonCode, String remark);
+
+    /** 可合入主批的候选（同站同快照同产品且 wait） */
+    List<TrackMergeCandidateVO> mergeCandidates(Long mainLotId);
 
     /**
      * 完工：processing → 下一站 wait，或末站 completed。

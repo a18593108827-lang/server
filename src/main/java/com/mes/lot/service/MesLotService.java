@@ -5,6 +5,7 @@ import com.mes.lot.dto.MesLotCreateDTO;
 import com.mes.lot.dto.MesLotQuery;
 import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.vo.MesLotCreateResultVO;
+import com.mes.lot.vo.MesLotGenealogyNodeVO;
 import com.mes.lot.vo.MesLotVO;
 
 /** 批次服务 */
@@ -24,4 +25,11 @@ public interface MesLotService {
 
     /** 放行：绑定当时 active 的 route_version_id */
     void release(Long id);
+
+    /**
+     * 谱系树。
+     * @param direction up|down|both
+     * @param depth 最大深度，默认 5
+     */
+    MesLotGenealogyNodeVO genealogy(Long lotId, String direction, Integer depth);
 }

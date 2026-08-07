@@ -10,6 +10,7 @@ import com.mes.lot.dto.MesLotQuery;
 import com.mes.lot.dto.MesLotUpdateDTO;
 import com.mes.lot.service.MesLotService;
 import com.mes.lot.vo.MesLotCreateResultVO;
+import com.mes.lot.vo.MesLotGenealogyNodeVO;
 import com.mes.lot.vo.MesLotVO;
 import com.mes.hold.service.FutureHoldService;
 import com.mes.hold.service.HoldService;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -83,6 +85,19 @@ public class MesLotController {
     @GetMapping("/{id}/future-holds")
     public R<List<MesFutureHoldVO>> futureHolds(@PathVariable Long id) {
         return R.ok(futureHoldService.listByLot(id));
+    }
+
+    /**
+     * 谱系树（Split/Merge）
+     * @param direction up|down|both，默认 both
+     * @param depth 层数，默认 5
+     */
+    @SaCheckPermission("lot:list")
+    @GetMapping("/{id}/genealogy")
+    public R<MesLotGenealogyNodeVO> genealogy(@PathVariable Long id,
+                                              @RequestParam(required = false, defaultValue = "both") String direction,
+                                              @RequestParam(required = false) Integer depth) {
+        return R.ok(mesLotService.genealogy(id, direction, depth));
     }
 
     /** 改属性 */

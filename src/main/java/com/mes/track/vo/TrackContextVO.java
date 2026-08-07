@@ -26,6 +26,10 @@ public class TrackContextVO {
     private Boolean canSkip;
     private Boolean canEnterOffFlow;
     private Boolean canResumeOffFlow;
+    /** 是否可分批（wait + 有 qty + track:split） */
+    private Boolean canSplit;
+    /** 是否可作合批主批（wait + 快照 + track:merge） */
+    private Boolean canMerge;
     private Boolean offFlow;
     private Integer offFlowAnchorSortNo;
     private Integer reworkCount;

@@ -193,6 +193,9 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (294, 290, 3, 'track:move',      '??',     NULL,              NULL,               4,  1, NOW(), NOW(), 0),
 (295, 290, 3, 'track:rework',    '返工',   NULL,              NULL,               5,  1, NOW(), NOW(), 0),
 (296, 290, 3, 'track:skip',      '跳站',   NULL,              NULL,               6,  1, NOW(), NOW(), 0),
+(297, 290, 3, 'track:off-flow',   '临时离线', NULL,            NULL,               7,  1, NOW(), NOW(), 0),
+(298, 290, 3, 'track:split',      '分批',   NULL,              NULL,               8,  1, NOW(), NOW(), 0),
+(299, 290, 3, 'track:merge',      '合批',   NULL,              NULL,               9,  1, NOW(), NOW(), 0),
 -- ????
 (100, 0,   1, 'system',              '????', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
 (110, 100, 2, 'system:user',         '????', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
@@ -282,7 +285,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1119, 1, 293, NOW()),
 (1120, 1, 294, NOW()),
 (1130, 1, 295, NOW()),
-(1131, 1, 296, NOW())
+(1131, 1, 296, NOW()),
+(1132, 1, 297, NOW()),
+(1133, 1, 298, NOW()),
+(1134, 1, 299, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor????? + ????
@@ -305,7 +311,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1411, 4, 245, NOW()),
 (1412, 4, 246, NOW()),
 (1413, 4, 295, NOW()),
-(1414, 4, 296, NOW())
+(1414, 4, 296, NOW()),
+(1415, 4, 297, NOW()),
+(1416, 4, 298, NOW()),
+(1417, 4, 299, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -345,6 +354,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1323, 3, 249, NOW()),
 (1324, 3, 295, NOW()),
 (1325, 3, 296, NOW()),
+(1326, 3, 297, NOW()),
+(1327, 3, 298, NOW()),
+(1328, 3, 299, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -485,13 +497,17 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     lot_no            VARCHAR(64)   NOT NULL COMMENT '???',
     product_code      VARCHAR(64)            COMMENT '????',
     qty               INT           NOT NULL DEFAULT 0 COMMENT '??',
+    scrap_qty         INT           NOT NULL DEFAULT 0 COMMENT '累计报废数量',
     priority          INT           NOT NULL DEFAULT 50 COMMENT '???1-100????????50',
-    customer_lot      VARCHAR(64)            COMMENT '??Lot',
-    route_id          BIGINT                 COMMENT '??ID',
-    route_version_id  BIGINT                 COMMENT '??????ID?Release???',
-    current_sort_no   INT                    COMMENT '???????????',
-    current_step_id   BIGINT                 COMMENT '????ID',
-    current_eqp_id    BIGINT                 COMMENT '????ID?TrackIn??',
+    hot_flag          TINYINT       NOT NULL DEFAULT 0 COMMENT 'Hot Lot 0/1',
+    customer_lot      VARCHAR(64)            COMMENT '客户Lot',
+    parent_lot_id     BIGINT                 COMMENT '直系父Lot',
+    merged_to_lot_id  BIGINT                 COMMENT '合批目标Lot',
+    route_id          BIGINT                 COMMENT '路线ID',
+    route_version_id  BIGINT                 COMMENT '放行快照版本ID，Release后锁定',
+    current_sort_no   INT                    COMMENT '当前站顺序号',
+    current_step_id   BIGINT                 COMMENT '当前工序ID',
+    current_eqp_id    BIGINT                 COMMENT '当前设备ID',
     rework_counts     VARCHAR(512)           COMMENT '按触发站累计返工次数JSON',
     off_flow          TINYINT       NOT NULL DEFAULT 0 COMMENT '是否在Off-Flow中 0/1',
     off_flow_anchor_sort INT                 COMMENT 'Off-Flow锚点站序',
@@ -504,22 +520,39 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     qtime_started_at  DATETIME(3)            COMMENT 'QueueTime开窗时刻',
     qtime_max_min     INT                    COMMENT 'QueueTime开窗固化上限分钟',
     qtime_on_violate  VARCHAR(16)            COMMENT 'QueueTime开窗固化策略',
-    status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT '??: created???/released???/wait????/processing???/held??/completed???/scrapped???',
-    remark            VARCHAR(512)           COMMENT '??',
-    version           INT           NOT NULL DEFAULT 0 COMMENT '???',
-    create_by         BIGINT                 COMMENT '???',
-    create_time       DATETIME               COMMENT '????',
-    update_by         BIGINT                 COMMENT '???',
-    update_time       DATETIME               COMMENT '????',
-    deleted           TINYINT       NOT NULL DEFAULT 0 COMMENT '????',
+    status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT '状态',
+    remark            VARCHAR(512)           COMMENT '备注',
+    version           INT           NOT NULL DEFAULT 0 COMMENT '乐观锁',
+    create_by         BIGINT                 COMMENT '创建人',
+    create_time       DATETIME               COMMENT '创建时间',
+    update_by         BIGINT                 COMMENT '更新人',
+    update_time       DATETIME               COMMENT '更新时间',
+    deleted           TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_lot_no (lot_no),
     KEY idx_lot_status (status),
     KEY idx_lot_product (product_code),
     KEY idx_lot_route (route_id),
     KEY idx_lot_route_ver (route_version_id),
+    KEY idx_lot_parent (parent_lot_id),
     KEY idx_lot_current_step (current_step_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='??';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次';
+
+CREATE TABLE IF NOT EXISTS mes_lot_genealogy (
+    id             BIGINT       NOT NULL COMMENT '主键',
+    txn_type       VARCHAR(16)  NOT NULL COMMENT 'split/merge',
+    parent_lot_id  BIGINT       NOT NULL COMMENT 'Split=父; Merge=主Lot',
+    child_lot_id   BIGINT       NOT NULL COMMENT 'Split=子; Merge=被吞源',
+    qty            INT          NOT NULL COMMENT '本次转移数量',
+    tx_id          BIGINT                COMMENT '关联 mes_tx_log.id',
+    reason_code    VARCHAR(64)           COMMENT '原因码',
+    create_by      BIGINT                COMMENT '操作人',
+    create_time    DATETIME     NOT NULL COMMENT '创建时间',
+    PRIMARY KEY (id),
+    KEY idx_gene_parent (parent_lot_id),
+    KEY idx_gene_child (child_lot_id),
+    KEY idx_gene_tx (tx_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次分合批谱系';
 
 CREATE TABLE IF NOT EXISTS mes_lot_no_seq (
     seq_day  CHAR(8) NOT NULL COMMENT 'yyyyMMdd',
