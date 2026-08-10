@@ -602,6 +602,7 @@ CREATE TABLE IF NOT EXISTS mes_wip_lot (
     product_code      VARCHAR(64)            COMMENT '????',
     qty               INT           NOT NULL DEFAULT 0 COMMENT '??',
     priority          INT           NOT NULL DEFAULT 50 COMMENT '???1-100?????',
+    hot_flag          TINYINT       NOT NULL DEFAULT 0 COMMENT 'Hot Lot 0/1',
     customer_lot      VARCHAR(64)            COMMENT '??Lot',
     status            VARCHAR(32)   NOT NULL COMMENT '????: wait???/processing???/held??',
     current_sort_no   INT                    COMMENT '???????????',

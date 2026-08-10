@@ -58,6 +58,9 @@ public class MesLotServiceImpl implements MesLotService {
     public static final String STATUS_RELEASED = "released";
     public static final String STATUS_WAIT = "wait";
     public static final String STATUS_PROCESSING = "processing";
+    public static final String STATUS_HELD = "held";
+    /** 打 Hot 时 priority 下限 */
+    public static final int HOT_PRIORITY_FLOOR = 80;
     /** Route 生效版本状态 */
     public static final String ROUTE_ACTIVE = "active";
     /** 厂内批次号前缀 */
@@ -89,6 +92,10 @@ public class MesLotServiceImpl implements MesLotService {
         }
         if (StringUtils.hasText(query.getStatus())) {
             qw.eq(MesLot::getStatus, query.getStatus().trim());
+        }
+        if (query.getHotFlag() != null) {
+            AssertUtil.isTrue(query.getHotFlag() == 0 || query.getHotFlag() == 1, "hotFlag 只能为 0 或 1");
+            qw.eq(MesLot::getHotFlag, query.getHotFlag());
         }
         qw.orderByDesc(MesLot::getCreateTime);
 
@@ -126,6 +133,8 @@ public class MesLotServiceImpl implements MesLotService {
 
         int priority = dto.getPriority() == null ? 50 : dto.getPriority();
         AssertUtil.isTrue(priority >= 1 && priority <= 100, "优先级范围为1-100");
+        int hotFlag = normalizeHotFlag(dto.getHotFlag(), 0);
+        priority = applyHotPriorityFloor(hotFlag, priority);
 
         long userId = StpUtil.getLoginIdAsLong();
         MesLot lot = new MesLot();
@@ -134,7 +143,7 @@ public class MesLotServiceImpl implements MesLotService {
         lot.setQty(dto.getQty());
         lot.setScrapQty(0);
         lot.setPriority(priority);
-        lot.setHotFlag(0);
+        lot.setHotFlag(hotFlag);
         lot.setCustomerLot(blankToNull(dto.getCustomerLot()));
         lot.setRouteId(dto.getRouteId());
         lot.setRouteVersionId(null);
@@ -183,19 +192,21 @@ public class MesLotServiceImpl implements MesLotService {
                 assertRouteUsable(dto.getRouteId());
             }
             lot.setRouteId(dto.getRouteId());
+            lot.setProductCode(blankToNull(dto.getProductCode()));
+            lot.setQty(dto.getQty());
         } else {
-            // 已放行/在途：禁止改路线（route_version_id 始终不可通过本接口改）
             AssertUtil.isFalse(dto.getRouteId() != null && !Objects.equals(dto.getRouteId(), lot.getRouteId()),
                     "已放行不可修改路线");
             AssertUtil.isFalse(dto.getQty() != null && !Objects.equals(dto.getQty(), lot.getQty()),
                     "数量变更请走 Split/Merge/Scrap/Bonus 事务");
+            AssertUtil.isFalse(!Objects.equals(blankToNull(dto.getProductCode()), lot.getProductCode()),
+                    "已放行不可修改产品编码");
         }
 
-        lot.setProductCode(blankToNull(dto.getProductCode()));
-        if (STATUS_CREATED.equals(lot.getStatus())) {
-            lot.setQty(dto.getQty());
-        }
-        lot.setPriority(dto.getPriority());
+        int hotFlag = normalizeHotFlag(dto.getHotFlag(), lot.getHotFlag() == null ? 0 : lot.getHotFlag());
+        int priority = applyHotPriorityFloor(hotFlag, dto.getPriority());
+        lot.setPriority(priority);
+        lot.setHotFlag(hotFlag);
         lot.setCustomerLot(blankToNull(dto.getCustomerLot()));
         lot.setRemark(blankToNull(dto.getRemark()));
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
@@ -317,7 +328,24 @@ public class MesLotServiceImpl implements MesLotService {
         return STATUS_CREATED.equals(status)
                 || STATUS_RELEASED.equals(status)
                 || STATUS_WAIT.equals(status)
-                || STATUS_PROCESSING.equals(status);
+                || STATUS_PROCESSING.equals(status)
+                || STATUS_HELD.equals(status);
+    }
+
+    private static int normalizeHotFlag(Integer hotFlag, int defaultValue) {
+        if (hotFlag == null) {
+            return defaultValue;
+        }
+        AssertUtil.isTrue(hotFlag == 0 || hotFlag == 1, "hotFlag 只能为 0 或 1");
+        return hotFlag;
+    }
+
+    private static int applyHotPriorityFloor(int hotFlag, int priority) {
+        AssertUtil.isTrue(priority >= 1 && priority <= 100, "优先级范围为1-100");
+        if (hotFlag == 1 && priority < HOT_PRIORITY_FLOOR) {
+            return HOT_PRIORITY_FLOOR;
+        }
+        return priority;
     }
 
     /** 路线存在且未停用 */

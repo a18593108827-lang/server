@@ -54,6 +54,7 @@ public class WipProjectionServiceImpl implements WipProjectionService {
         row.setProductCode(lot.getProductCode());
         row.setQty(lot.getQty());
         row.setPriority(lot.getPriority());
+        row.setHotFlag(lot.getHotFlag() == null ? 0 : lot.getHotFlag());
         row.setCustomerLot(lot.getCustomerLot());
         row.setStatus(lot.getStatus());
         row.setCurrentSortNo(lot.getCurrentSortNo());

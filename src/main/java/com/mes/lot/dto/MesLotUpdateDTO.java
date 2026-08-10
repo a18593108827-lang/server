@@ -23,6 +23,11 @@ public class MesLotUpdateDTO {
     @Max(value = 100, message = "优先级范围为1-100")
     private Integer priority;
 
+    /** Hot Lot：0/1，空则保持原值；为 1 时 priority 低于 80 会抬到 80 */
+    @Min(value = 0, message = "hotFlag 只能为 0 或 1")
+    @Max(value = 1, message = "hotFlag 只能为 0 或 1")
+    private Integer hotFlag;
+
     private String customerLot;
 
     /** 仅未放行可改；已放行传入不同值将拒绝 */

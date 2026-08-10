@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS mes_wip_lot (
     product_code      VARCHAR(64)            COMMENT '产品编码',
     qty               INT           NOT NULL DEFAULT 0 COMMENT '数量',
     priority          INT           NOT NULL DEFAULT 50 COMMENT '优先级1-100，越大越急',
+    hot_flag          TINYINT       NOT NULL DEFAULT 0 COMMENT 'Hot Lot 0/1',
     customer_lot      VARCHAR(64)            COMMENT '客户Lot',
     status            VARCHAR(32)   NOT NULL COMMENT '在制状态: wait待加工/processing加工中/held锁批',
     current_sort_no   INT                    COMMENT '当前站顺序号（快照内）',
@@ -32,12 +33,12 @@ CREATE TABLE IF NOT EXISTS mes_wip_lot (
 
 -- 从已在制 Lot 回填（可重复执行）
 INSERT INTO mes_wip_lot (
-  lot_id, lot_no, product_code, qty, priority, customer_lot,
+  lot_id, lot_no, product_code, qty, priority, hot_flag, customer_lot,
   status, current_sort_no, current_step_id, current_eqp_id,
   route_id, route_version_id, update_time
 )
 SELECT
-  id, lot_no, product_code, qty, priority, customer_lot,
+  id, lot_no, product_code, qty, priority, IFNULL(hot_flag, 0), customer_lot,
   status, current_sort_no, current_step_id, current_eqp_id,
   route_id, route_version_id, IFNULL(update_time, NOW())
 FROM mes_lot
@@ -48,6 +49,7 @@ ON DUPLICATE KEY UPDATE
   product_code = VALUES(product_code),
   qty = VALUES(qty),
   priority = VALUES(priority),
+  hot_flag = VALUES(hot_flag),
   customer_lot = VALUES(customer_lot),
   status = VALUES(status),
   current_sort_no = VALUES(current_sort_no),

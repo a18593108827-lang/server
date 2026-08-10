@@ -12,6 +12,8 @@ public class MesWipVO {
     private String productCode;
     private Integer qty;
     private Integer priority;
+    /** Hot Lot 0/1 */
+    private Integer hotFlag;
     private String customerLot;
     private String status;
     private Integer currentSortNo;

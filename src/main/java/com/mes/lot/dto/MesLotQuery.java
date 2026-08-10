@@ -9,6 +9,8 @@ public class MesLotQuery {
     private String keyword;
     /** 状态：created / released / completed / scrapped */
     private String status;
+    /** Hot 筛选：0 / 1 */
+    private Integer hotFlag;
     private long page = 1;
     private long size = 20;
 }

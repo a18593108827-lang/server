@@ -65,7 +65,8 @@ public class WipServiceImpl implements WipService {
         if (query.getCurrentSortNo() != null) {
             qw.eq(MesWipLot::getCurrentSortNo, query.getCurrentSortNo());
         }
-        qw.orderByDesc(MesWipLot::getPriority).orderByAsc(MesWipLot::getCurrentSortNo).orderByAsc(MesWipLot::getLotNo);
+        qw.orderByDesc(MesWipLot::getHotFlag).orderByDesc(MesWipLot::getPriority)
+                .orderByAsc(MesWipLot::getCurrentSortNo).orderByAsc(MesWipLot::getLotNo);
 
         Page<MesWipLot> result = mesWipLotMapper.selectPage(page, qw);
         List<MesWipLot> rows = result.getRecords();
@@ -131,6 +132,7 @@ public class WipServiceImpl implements WipService {
         vo.setProductCode(row.getProductCode());
         vo.setQty(row.getQty());
         vo.setPriority(row.getPriority());
+        vo.setHotFlag(row.getHotFlag());
         vo.setCustomerLot(row.getCustomerLot());
         vo.setStatus(row.getStatus());
         vo.setCurrentSortNo(row.getCurrentSortNo());
