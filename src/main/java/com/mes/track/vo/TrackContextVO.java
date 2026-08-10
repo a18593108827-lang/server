@@ -30,6 +30,8 @@ public class TrackContextVO {
     private Boolean canSplit;
     /** 是否可作合批主批（wait + 快照 + track:merge） */
     private Boolean canMerge;
+    /** 是否可报废（wait + qty≥1 + track:scrap） */
+    private Boolean canScrap;
     private Boolean offFlow;
     private Integer offFlowAnchorSortNo;
     private Integer reworkCount;

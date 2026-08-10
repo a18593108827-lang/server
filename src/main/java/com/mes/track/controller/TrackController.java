@@ -12,12 +12,15 @@ import com.mes.track.dto.TrackReleaseDTO;
 import com.mes.track.dto.TrackReworkDTO;
 import com.mes.track.dto.TrackSkipDTO;
 import com.mes.track.dto.TrackMergeDTO;
+import com.mes.track.dto.TrackScrapDTO;
 import com.mes.track.dto.TrackSplitDTO;
 import com.mes.track.service.TrackService;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
 import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackReleaseResultVO;
+import com.mes.track.vo.TrackScrapReasonVO;
+import com.mes.track.vo.TrackScrapResultVO;
 import com.mes.track.vo.TrackSplitResultVO;
 import com.mes.track.vo.TrackTxnResultVO;
 import jakarta.validation.Valid;
@@ -122,6 +125,22 @@ public class TrackController {
     @GetMapping("/merge/candidates")
     public R<List<TrackMergeCandidateVO>> mergeCandidates(@RequestParam Long mainLotId) {
         return R.ok(trackService.mergeCandidates(mainLotId));
+    }
+
+    /** 报废：部分减 qty；全批 → scrapped */
+    @SaCheckPermission("track:scrap")
+    @OperLog(module = "Track", action = "Scrap")
+    @PostMapping("/scrap")
+    public R<TrackScrapResultVO> scrap(@Valid @RequestBody TrackScrapDTO dto) {
+        return R.ok(trackService.scrap(dto.getLotId(), dto.getScrapQty(),
+                dto.getReasonCode(), dto.getRemark()));
+    }
+
+    /** Scrap 原因码白名单 */
+    @SaCheckPermission(value = {"track:scrap", "lot:list"}, mode = SaMode.OR)
+    @GetMapping("/scrap/reason-codes")
+    public R<List<TrackScrapReasonVO>> scrapReasonCodes() {
+        return R.ok(trackService.scrapReasonCodes());
     }
 
     /** 执行上下文（只读） */

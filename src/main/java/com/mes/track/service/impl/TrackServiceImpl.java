@@ -50,6 +50,8 @@ import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackOffFlowOptionVO;
 import com.mes.track.vo.TrackReleaseResultVO;
 import com.mes.track.vo.TrackReworkOptionVO;
+import com.mes.track.vo.TrackScrapReasonVO;
+import com.mes.track.vo.TrackScrapResultVO;
 import com.mes.track.vo.TrackSkipOptionVO;
 import com.mes.track.vo.TrackSplitResultVO;
 import com.mes.track.vo.TrackTxnResultVO;
@@ -74,6 +76,7 @@ public class TrackServiceImpl implements TrackService {
     public static final String STATUS_WAIT = "wait";
     public static final String STATUS_PROCESSING = "processing";
     public static final String STATUS_COMPLETED = "completed";
+    public static final String STATUS_SCRAPPED = "scrapped";
     public static final String STATUS_MERGED = "merged"; // 合批终态，不可再 Track
     public static final String ROUTE_ACTIVE = "active";
 
@@ -86,6 +89,17 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_OFF_FLOW_RESUME = "OFF_FLOW_RESUME";
     public static final String TX_SPLIT = "SPLIT";
     public static final String TX_MERGE = "MERGE"; // 合批事务类型
+    public static final String TX_SCRAP = "SCRAP";
+
+    /** P0 Scrap 原因码白名单 */
+    private static final List<TrackScrapReasonVO> SCRAP_REASON_CODES = List.of(
+            new TrackScrapReasonVO("BREAKAGE", "破片/物理损坏"),
+            new TrackScrapReasonVO("PROCESS_FAIL", "工艺失败"),
+            new TrackScrapReasonVO("EQP_DAMAGE", "设备致损"),
+            new TrackScrapReasonVO("CONTAMINATION", "污染"),
+            new TrackScrapReasonVO("METROLOGY_FAIL", "量测不合格"),
+            new TrackScrapReasonVO("OTHER", "其他")
+    );
 
     private final MesLotMapper mesLotMapper;
     private final MesLotGenealogyMapper mesLotGenealogyMapper;
@@ -527,6 +541,100 @@ public class TrackServiceImpl implements TrackService {
             list.add(vo);
         }
         return list;
+    }
+
+    /**
+     * 报废：qty↓ scrap_qty↑；scrapQty==原qty 时升格全批 scrapped。
+     * 仅 wait、非 Hold、非 Off-Flow；原因码白名单必填。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackScrapResultVO scrap(Long lotId, Integer scrapQty, String reasonCode, String remark) {
+        AssertUtil.notNull(lotId, "批次不能为空");
+        AssertUtil.notNull(scrapQty, "报废数量不能为空");
+        AssertUtil.isTrue(scrapQty >= 1, "报废数量至少为1");
+        AssertUtil.isTrue(StringUtils.hasText(reasonCode), "原因码不能为空");
+
+        String code = reasonCode.trim();
+        AssertUtil.isTrue(isScrapReasonAllowed(code), "原因码非法: " + code);
+        String remarkTrim = StringUtils.hasText(remark) ? remark.trim() : null;
+        if ("OTHER".equals(code)) {
+            AssertUtil.isTrue(StringUtils.hasText(remarkTrim), "原因码为其他时备注必填");
+        }
+
+        MesLot lot = mesLotMapper.selectOne(new LambdaQueryWrapper<MesLot>()
+                .eq(MesLot::getId, lotId)
+                .last("FOR UPDATE"));
+        AssertUtil.notNull(lot, "批次不存在");
+        AssertUtil.notNull(lot.getRouteVersionId(), "批次未放行");
+
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅等待加工状态可报废");
+        AssertUtil.isTrue(!isOffFlow(lot), "Off-Flow 中不可报废");
+        AssertUtil.isTrue(lot.getQty() != null && lot.getQty() >= 1, "数量不足，无法报废");
+        AssertUtil.isTrue(scrapQty <= lot.getQty(), "报废数量不能超过当前数量");
+
+        int qtyBefore = lot.getQty();
+        int scrapBefore = lot.getScrapQty() != null ? lot.getScrapQty() : 0;
+        long scrapAfterLong = (long) scrapBefore + scrapQty;
+        AssertUtil.isTrue(scrapAfterLong <= Integer.MAX_VALUE, "累计报废数量溢出");
+        int scrapAfter = (int) scrapAfterLong;
+        int qtyAfter = qtyBefore - scrapQty;
+        boolean full = qtyAfter == 0;
+        String mode = full ? "full" : "partial";
+        String fromStatus = lot.getStatus();
+        String toStatus = full ? STATUS_SCRAPPED : STATUS_WAIT;
+        Integer fromSortNo = lot.getCurrentSortNo();
+        long userId = StpUtil.getLoginIdAsLong();
+
+        lot.setQty(qtyAfter);
+        lot.setScrapQty(scrapAfter);
+        lot.setStatus(toStatus);
+        lot.setUpdateBy(userId);
+        int rows = mesLotMapper.updateById(lot);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
+
+        JSONObject ext = new JSONObject();
+        ext.set("txn", "scrap");
+        ext.set("mode", mode);
+        ext.set("scrapQty", scrapQty);
+        ext.set("qtyBefore", qtyBefore);
+        ext.set("qtyAfter", qtyAfter);
+        ext.set("scrapQtyBefore", scrapBefore);
+        ext.set("scrapQtyAfter", scrapAfter);
+        ext.set("reasonCode", code);
+        String extJson = ext.toString();
+        AssertUtil.isTrue(extJson.length() <= 512, "报废扩展信息过长，请缩短备注");
+
+        Long txId = writeTxLog(lot, TX_SCRAP, fromStatus, toStatus, fromSortNo, fromSortNo,
+                lot.getCurrentStepId(), lot.getCurrentEqpId(), lot.getRouteVersionId(),
+                remarkTrim != null ? remarkTrim : "报废",
+                null, null, extJson);
+
+        TrackScrapResultVO result = new TrackScrapResultVO();
+        result.setLotId(lot.getId());
+        result.setLotNo(lot.getLotNo());
+        result.setMode(mode);
+        result.setQty(lot.getQty());
+        result.setScrapQty(lot.getScrapQty());
+        result.setStatus(lot.getStatus());
+        result.setTxId(txId);
+        return result;
+    }
+
+    @Override
+    public List<TrackScrapReasonVO> scrapReasonCodes() {
+        return SCRAP_REASON_CODES;
+    }
+
+    private static boolean isScrapReasonAllowed(String code) {
+        for (TrackScrapReasonVO item : SCRAP_REASON_CODES) {
+            if (item.getCode().equals(code)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** 合批同质校验：产品、工艺快照、当前站序与工序须一致 */
@@ -1003,6 +1111,11 @@ public class TrackServiceImpl implements TrackService {
                 && lot.getRouteVersionId() != null
                 && lot.getCurrentSortNo() != null
                 && StpUtil.hasPermission("track:merge"));
+        vo.setCanScrap(STATUS_WAIT.equals(lot.getStatus())
+                && !isOffFlow(lot)
+                && lot.getQty() != null && lot.getQty() >= 1
+                && lot.getRouteVersionId() != null
+                && StpUtil.hasPermission("track:scrap"));
         vo.setOffFlow(isOffFlow(lot));
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);

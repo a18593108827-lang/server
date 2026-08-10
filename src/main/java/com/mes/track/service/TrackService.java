@@ -5,6 +5,8 @@ import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
 import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackReleaseResultVO;
+import com.mes.track.vo.TrackScrapReasonVO;
+import com.mes.track.vo.TrackScrapResultVO;
 import com.mes.track.vo.TrackSplitResultVO;
 import com.mes.track.vo.TrackTxnResultVO;
 import com.mes.track.vo.MesTxLogVO;
@@ -28,6 +30,12 @@ public interface TrackService {
 
     /** 可合入主批的候选（同站同快照同产品且 wait） */
     List<TrackMergeCandidateVO> mergeCandidates(Long mainLotId);
+
+    /** 报废：部分减 qty；全批 status→scrapped */
+    TrackScrapResultVO scrap(Long lotId, Integer scrapQty, String reasonCode, String remark);
+
+    /** Scrap 原因码白名单（供 UI 下拉） */
+    List<TrackScrapReasonVO> scrapReasonCodes();
 
     /**
      * 完工：processing → 下一站 wait，或末站 completed。
