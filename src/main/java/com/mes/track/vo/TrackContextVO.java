@@ -32,6 +32,8 @@ public class TrackContextVO {
     private Boolean canMerge;
     /** 是否可报废（wait + qty≥1 + track:scrap） */
     private Boolean canScrap;
+    /** 是否可数量调整（wait + track:bonus） */
+    private Boolean canBonus;
     private Boolean offFlow;
     private Integer offFlowAnchorSortNo;
     private Integer reworkCount;

@@ -12,9 +12,12 @@ import com.mes.track.dto.TrackReleaseDTO;
 import com.mes.track.dto.TrackReworkDTO;
 import com.mes.track.dto.TrackSkipDTO;
 import com.mes.track.dto.TrackMergeDTO;
+import com.mes.track.dto.TrackBonusDTO;
 import com.mes.track.dto.TrackScrapDTO;
 import com.mes.track.dto.TrackSplitDTO;
 import com.mes.track.service.TrackService;
+import com.mes.track.vo.TrackBonusReasonVO;
+import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
 import com.mes.track.vo.TrackMergeResultVO;
@@ -141,6 +144,22 @@ public class TrackController {
     @GetMapping("/scrap/reason-codes")
     public R<List<TrackScrapReasonVO>> scrapReasonCodes() {
         return R.ok(trackService.scrapReasonCodes());
+    }
+
+    /** 数量调整：±delta；不改 scrap_qty/status */
+    @SaCheckPermission("track:bonus")
+    @OperLog(module = "Track", action = "Bonus")
+    @PostMapping("/bonus")
+    public R<TrackBonusResultVO> bonus(@Valid @RequestBody TrackBonusDTO dto) {
+        return R.ok(trackService.bonus(dto.getLotId(), dto.getDelta(),
+                dto.getReasonCode(), dto.getRemark()));
+    }
+
+    /** Bonus 原因码白名单 */
+    @SaCheckPermission(value = {"track:bonus", "lot:list"}, mode = SaMode.OR)
+    @GetMapping("/bonus/reason-codes")
+    public R<List<TrackBonusReasonVO>> bonusReasonCodes() {
+        return R.ok(trackService.bonusReasonCodes());
     }
 
     /** 执行上下文（只读） */

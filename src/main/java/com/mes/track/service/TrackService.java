@@ -5,6 +5,8 @@ import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
 import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackReleaseResultVO;
+import com.mes.track.vo.TrackBonusReasonVO;
+import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackScrapReasonVO;
 import com.mes.track.vo.TrackScrapResultVO;
 import com.mes.track.vo.TrackSplitResultVO;
@@ -36,6 +38,12 @@ public interface TrackService {
 
     /** Scrap 原因码白名单（供 UI 下拉） */
     List<TrackScrapReasonVO> scrapReasonCodes();
+
+    /** 数量调整：±delta；不改 scrap_qty/status */
+    TrackBonusResultVO bonus(Long lotId, Integer delta, String reasonCode, String remark);
+
+    /** Bonus 原因码白名单（供 UI 下拉） */
+    List<TrackBonusReasonVO> bonusReasonCodes();
 
     /**
      * 完工：processing → 下一站 wait，或末站 completed。

@@ -43,6 +43,8 @@ import com.mes.track.support.OffFlowCountStore;
 import com.mes.track.support.QueueTimeSupport;
 import com.mes.track.support.ReworkCountStore;
 import com.mes.track.vo.MesTxLogVO;
+import com.mes.track.vo.TrackBonusReasonVO;
+import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackBranchOptionVO;
 import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
@@ -90,6 +92,7 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_SPLIT = "SPLIT";
     public static final String TX_MERGE = "MERGE"; // 合批事务类型
     public static final String TX_SCRAP = "SCRAP";
+    public static final String TX_BONUS = "BONUS";
 
     /** P0 Scrap 原因码白名单 */
     private static final List<TrackScrapReasonVO> SCRAP_REASON_CODES = List.of(
@@ -99,6 +102,15 @@ public class TrackServiceImpl implements TrackService {
             new TrackScrapReasonVO("CONTAMINATION", "污染"),
             new TrackScrapReasonVO("METROLOGY_FAIL", "量测不合格"),
             new TrackScrapReasonVO("OTHER", "其他")
+    );
+
+    /** P0 Bonus 原因码白名单（与 Scrap 隔离） */
+    private static final List<TrackBonusReasonVO> BONUS_REASON_CODES = List.of(
+            new TrackBonusReasonVO("CYCLE_COUNT", "盘点差异"),
+            new TrackBonusReasonVO("RECEIPT_CORR", "收货/点片修正"),
+            new TrackBonusReasonVO("METROLOGY_ADJ", "计量/点料修正"),
+            new TrackBonusReasonVO("SYSTEM_CORR", "系统录入错误纠正"),
+            new TrackBonusReasonVO("OTHER", "其他")
     );
 
     private final MesLotMapper mesLotMapper;
@@ -637,6 +649,89 @@ public class TrackServiceImpl implements TrackService {
         return false;
     }
 
+    /**
+     * 数量调整：只改 qty；不改 scrap_qty/status；原因码独立白名单。
+     * 仅 wait、非 Hold、非 Off-Flow。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackBonusResultVO bonus(Long lotId, Integer delta, String reasonCode, String remark) {
+        AssertUtil.notNull(lotId, "批次不能为空");
+        AssertUtil.notNull(delta, "调整数量不能为空");
+        AssertUtil.isTrue(delta != 0, "调整数量不能为0");
+        AssertUtil.isTrue(StringUtils.hasText(reasonCode), "原因码不能为空");
+
+        String code = reasonCode.trim();
+        AssertUtil.isTrue(isBonusReasonAllowed(code), "原因码非法: " + code);
+        String remarkTrim = StringUtils.hasText(remark) ? remark.trim() : null;
+        if ("OTHER".equals(code)) {
+            AssertUtil.isTrue(StringUtils.hasText(remarkTrim), "原因码为其他时备注必填");
+        }
+
+        MesLot lot = mesLotMapper.selectOne(new LambdaQueryWrapper<MesLot>()
+                .eq(MesLot::getId, lotId)
+                .last("FOR UPDATE"));
+        AssertUtil.notNull(lot, "批次不存在");
+        AssertUtil.notNull(lot.getRouteVersionId(), "批次未放行");
+
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(STATUS_WAIT.equals(lot.getStatus()), "仅等待加工状态可数量调整");
+        AssertUtil.isTrue(!isOffFlow(lot), "Off-Flow 中不可数量调整");
+
+        int qtyBefore = lot.getQty() != null ? lot.getQty() : 0;
+        long qtyAfterLong = (long) qtyBefore + delta;
+        AssertUtil.isTrue(qtyAfterLong >= 0, "调整后数量不能为负");
+        AssertUtil.isTrue(qtyAfterLong <= Integer.MAX_VALUE, "调整后数量溢出");
+        int qtyAfter = (int) qtyAfterLong;
+        String fromStatus = lot.getStatus();
+        Integer fromSortNo = lot.getCurrentSortNo();
+        long userId = StpUtil.getLoginIdAsLong();
+
+        lot.setQty(qtyAfter);
+        lot.setUpdateBy(userId);
+        int rows = mesLotMapper.updateById(lot);
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        wipProjectionService.syncFromLot(lot);
+
+        JSONObject ext = new JSONObject();
+        ext.set("txn", "bonus");
+        ext.set("delta", delta);
+        ext.set("qtyBefore", qtyBefore);
+        ext.set("qtyAfter", qtyAfter);
+        ext.set("reasonCode", code);
+        String extJson = ext.toString();
+        AssertUtil.isTrue(extJson.length() <= 512, "调整扩展信息过长，请缩短备注");
+
+        Long txId = writeTxLog(lot, TX_BONUS, fromStatus, fromStatus, fromSortNo, fromSortNo,
+                lot.getCurrentStepId(), lot.getCurrentEqpId(), lot.getRouteVersionId(),
+                remarkTrim != null ? remarkTrim : "数量调整",
+                null, null, extJson);
+
+        TrackBonusResultVO result = new TrackBonusResultVO();
+        result.setLotId(lot.getId());
+        result.setLotNo(lot.getLotNo());
+        result.setDelta(delta);
+        result.setQty(lot.getQty());
+        result.setScrapQty(lot.getScrapQty() != null ? lot.getScrapQty() : 0);
+        result.setStatus(lot.getStatus());
+        result.setTxId(txId);
+        return result;
+    }
+
+    @Override
+    public List<TrackBonusReasonVO> bonusReasonCodes() {
+        return BONUS_REASON_CODES;
+    }
+
+    private static boolean isBonusReasonAllowed(String code) {
+        for (TrackBonusReasonVO item : BONUS_REASON_CODES) {
+            if (item.getCode().equals(code)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** 合批同质校验：产品、工艺快照、当前站序与工序须一致 */
     private void assertMergeCompatible(MesLot main, MesLot source) {
         AssertUtil.isTrue(Objects.equals(main.getProductCode(), source.getProductCode()),
@@ -1116,6 +1211,10 @@ public class TrackServiceImpl implements TrackService {
                 && lot.getQty() != null && lot.getQty() >= 1
                 && lot.getRouteVersionId() != null
                 && StpUtil.hasPermission("track:scrap"));
+        vo.setCanBonus(STATUS_WAIT.equals(lot.getStatus())
+                && !isOffFlow(lot)
+                && lot.getRouteVersionId() != null
+                && StpUtil.hasPermission("track:bonus"));
         vo.setOffFlow(isOffFlow(lot));
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
