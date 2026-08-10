@@ -223,7 +223,7 @@ public class MesLotServiceImpl implements MesLotService {
         int maxDepth = depth == null || depth <= 0 ? 5 : Math.min(depth, 20);// 默认 5 层, 上限 20
         String dir = direction == null ? "both" : direction.trim().toLowerCase(Locale.ROOT);
 
-        MesLotGenealogyNodeVO node = toGeneNode(root, null, null);
+        MesLotGenealogyNodeVO node = toGeneNode(root, null);
         // 递归向下展开树节点
         if ("down".equals(dir) || "both".equals(dir)) {
             fillDown(node, maxDepth, 0);
@@ -256,7 +256,8 @@ public class MesLotServiceImpl implements MesLotService {
             if (parent == null) {
                 break;
             }
-            MesLotGenealogyNodeVO parentNode = toGeneNode(parent, edge.getTxnType(), edge.getCreateTime());
+            MesLotGenealogyNodeVO parentNode = toGeneNode(parent, null);
+            applyEdge(cursor, edge);
             parentNode.setChildren(List.of(cursor));
             cursor = parentNode;
         }
@@ -283,23 +284,33 @@ public class MesLotServiceImpl implements MesLotService {
             if (child == null) {
                 continue;
             }
-            MesLotGenealogyNodeVO childNode = toGeneNode(child, edge.getTxnType(), edge.getCreateTime());
+            MesLotGenealogyNodeVO childNode = toGeneNode(child, edge);
             fillDown(childNode, maxDepth, level + 1);
             kids.add(childNode);
         }
         node.setChildren(kids);
     }
 
-    /** Lot → 谱系节点（txnType/txnTime 来自 genealogy 边，根节点可空） */
-    private static MesLotGenealogyNodeVO toGeneNode(MesLot lot, String txnType, java.time.LocalDateTime txnTime) {
+    /** Lot → 谱系节点（边字段来自 genealogy；根节点 edge=null） */
+    private static MesLotGenealogyNodeVO toGeneNode(MesLot lot, MesLotGenealogy edge) {
         MesLotGenealogyNodeVO node = new MesLotGenealogyNodeVO();
         node.setLotId(lot.getId());
         node.setLotNo(lot.getLotNo());
         node.setQty(lot.getQty());
         node.setStatus(lot.getStatus());
-        node.setTxnType(txnType);
-        node.setTxnTime(txnTime);
+        if (edge != null) {
+            applyEdge(node, edge);
+        }
         return node;
+    }
+
+    /** 边挂在 child 端：描述「本批如何从上级产生」 */
+    private static void applyEdge(MesLotGenealogyNodeVO node, MesLotGenealogy edge) {
+        node.setTxnType(edge.getTxnType());
+        node.setTxnTime(edge.getCreateTime());
+        node.setQtyTransferred(edge.getQty());
+        node.setTxId(edge.getTxId());
+        node.setReasonCode(edge.getReasonCode());
     }
 
     private static boolean isEditableStatus(String status) {
