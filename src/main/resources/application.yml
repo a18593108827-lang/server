@@ -44,3 +44,8 @@ mes:
     default-on-violate: HOLD
     alarm-only-block: true
     fail-open: true
+  # 站内加工时长：开工计时，太短不让出站，太长出站后锁批
+  process-time:
+    enabled: true
+    # 超时除了锁批，要不要再推告警（末站锁不了批时一定会告警）
+    alarm-on-max-exceed: true

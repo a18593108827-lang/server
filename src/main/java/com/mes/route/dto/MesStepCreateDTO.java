@@ -21,5 +21,9 @@ public class MesStepCreateDTO {
     private String eqpType;
     private Integer allowSkip;
     private Integer maxQueueMin;
+    /** 最短加工分钟，空=不管；须≥1，且不能大于最长 */
+    private Integer minProcessMin;
+    /** 最长加工分钟，空=不管 */
+    private Integer maxProcessMin;
     private String remark;
 }

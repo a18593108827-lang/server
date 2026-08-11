@@ -42,4 +42,10 @@ public class MesRouteStep extends BaseEntity {
 
     /** 快照 QueueTime */
     private Integer maxQueueMin;
+
+    /** 本站最短加工几分钟，null=不管；太短不让出站 */
+    private Integer minProcessMin;
+
+    /** 本站最长加工几分钟，null=不管；太长先出站再锁批 */
+    private Integer maxProcessMin;
 }

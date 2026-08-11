@@ -15,6 +15,10 @@ public class MesStepVO {
     private String eqpType;
     private Integer allowSkip;
     private Integer maxQueueMin;
+    /** 最短加工分钟 */
+    private Integer minProcessMin;
+    /** 最长加工分钟 */
+    private Integer maxProcessMin;
     /** 状态：1正常 0禁用 */
     private Integer status;
     private String remark;

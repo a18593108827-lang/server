@@ -40,6 +40,7 @@ import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
 import com.mes.track.service.TrackService;
 import com.mes.track.support.OffFlowCountStore;
+import com.mes.track.support.ProcessTimeSupport;
 import com.mes.track.support.QueueTimeSupport;
 import com.mes.track.support.ReworkCountStore;
 import com.mes.track.vo.MesTxLogVO;
@@ -133,6 +134,7 @@ public class TrackServiceImpl implements TrackService {
     private final OffFlowCountStore offFlowCountStore;
     private final StepEqpTypeGuard stepEqpTypeGuard;
     private final QueueTimeSupport queueTimeSupport;
+    private final ProcessTimeSupport processTimeSupport;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -218,9 +220,14 @@ public class TrackServiceImpl implements TrackService {
 
         lot.setStatus(STATUS_PROCESSING);
         lot.setCurrentEqpId(eqpId);
+        // 本站配了加工时长就按下秒表；没配则后面清掉库里可能残留的开表时间
+        processTimeSupport.startOnTrackIn(lot, current);
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        if (!processTimeSupport.isConstrained(current)) {
+            processTimeSupport.clearPersisted(lot);
+        }
         wipProjectionService.syncFromLot(lot);
 
         Long txId = writeTxLog(lot, TX_TRACK_IN, fromStatus, STATUS_PROCESSING, fromSortNo, fromSortNo,
@@ -788,6 +795,7 @@ public class TrackServiceImpl implements TrackService {
         if (eqpId != null) {
             ext.set("eqpId", String.valueOf(eqpId));
         }
+        processTimeSupport.putTrackInExt(ext, lot);
         return ext.isEmpty() ? null : ext.toString();
     }
 
@@ -814,9 +822,15 @@ public class TrackServiceImpl implements TrackService {
         RouteTrackOutDecision decision = routeEdgeResolver.resolveTrackOut(
                 lot.getRouteVersionId(), current, resultCode);
 
+        // 太短直接拒；太长只打标记，出站成功后再锁批
+        ProcessTimeSupport.SettleResult ptSettle = processTimeSupport.assertOnTrackOut(lot, current);
+
         // 旁路末站无下一站：不完工，走 Resume 回锚点
         if (decision.isCompleted() && isOffFlow(lot)) {
-            return doResumeOffFlow(lot, fromStatus, fromSortNo, fromEqpId, true, null);
+            processTimeSupport.clearPersisted(lot);
+            TrackTxnResultVO resumed = doResumeOffFlow(lot, fromStatus, fromSortNo, fromEqpId, true, null);
+            processTimeSupport.disposeAfterTrackOut(lot, ptSettle);
+            return resumed;
         }
 
         String toStatus;
@@ -832,19 +846,31 @@ public class TrackServiceImpl implements TrackService {
             lot.setCurrentEqpId(null);
         }
 
+        // 出站后秒表作废（先内存再落库）
+        processTimeSupport.clear(lot);
         lot.setUpdateBy(StpUtil.getLoginIdAsLong());
         int rows = mesLotMapper.updateById(lot);
         AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+        processTimeSupport.clearPersisted(lot);
         wipProjectionService.syncFromLot(lot);
+
+        JSONObject outExt = decision.toExtJson() == null ? new JSONObject()
+                : new JSONObject(decision.toExtJson());
+        processTimeSupport.putExt(outExt, ptSettle);
+        String outExtStr = outExt.isEmpty() ? null : outExt.toString();
 
         writeTxLog(lot, TX_TRACK_OUT, fromStatus, toStatus, fromSortNo, decision.getToSortNo(),
                 decision.getToStepId(), fromEqpId, lot.getRouteVersionId(), decision.getRemark(),
-                null, null, decision.toExtJson());
+                null, null, outExtStr);
 
         queueTimeSupport.openAfterTrackOut(lot, fromSortNo, decision);
 
+        // 加工超时：出站已成功，这里再 Hold/告警（末站 completed 锁不了就只告警）
+        processTimeSupport.disposeAfterTrackOut(lot, ptSettle);
+
         // Future Hold POST：落新站后再激活（本次 Out 已成功，下次推进被拦）
-        if (!decision.isCompleted() && lot.getCurrentSortNo() != null) {
+        if (!decision.isCompleted() && lot.getCurrentSortNo() != null
+                && !"held".equals(lot.getStatus())) {
             futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_POST);
         }
 
@@ -894,6 +920,8 @@ public class TrackServiceImpl implements TrackService {
         reworkCountStore.put(lot, fromSortNo, newCount);
 
         queueTimeSupport.clearWithLog(lot, "Rework 清除 QueueTime");
+        // 返工离开本站，加工秒表作废
+        processTimeSupport.clearPersisted(lot);
 
         lot.setStatus(STATUS_WAIT);
         lot.setCurrentSortNo(target.getSortNo());
@@ -1220,6 +1248,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
         vo.setPendingFutureHolds(futureHoldService.listPendingByLot(lotId));
         vo.setQueueTime(queueTimeSupport.toContextVo(lot));
+        vo.setProcessTime(null); // 加工中才有倒计时，下面按当前站补
 
         if (lot.getRouteVersionId() != null) {
             MesRouteVersion version = mesRouteVersionMapper.selectById(lot.getRouteVersionId());
@@ -1237,6 +1266,7 @@ public class TrackServiceImpl implements TrackService {
             return vo;
         }
         vo.setCurrentStep(toStepVo(current));
+        vo.setProcessTime(processTimeSupport.toContextVo(lot, current));
 
         MesRouteStep next = routeEdgeResolver.resolveDefaultNext(lot.getRouteVersionId(), current);
         if (next != null) {

@@ -528,6 +528,7 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     qtime_started_at  DATETIME(3)            COMMENT 'QueueTime开窗时刻',
     qtime_max_min     INT                    COMMENT 'QueueTime开窗固化上限分钟',
     qtime_on_violate  VARCHAR(16)            COMMENT 'QueueTime开窗固化策略',
+    process_started_at DATETIME(3)           COMMENT 'ProcessTime开计时时刻',
     status            VARCHAR(32)   NOT NULL DEFAULT 'created' COMMENT '状态',
     remark            VARCHAR(512)           COMMENT '备注',
     version           INT           NOT NULL DEFAULT 0 COMMENT '乐观锁',
@@ -688,7 +689,8 @@ INSERT INTO mes_hold_reason (
 (8004, 'M_MATERIAL', '??/????', 'other',    1, '??',       NOW(), NOW(), 0),
 (8005, 'C_REQUEST',  '????',     'customer', 1, '??',       NOW(), NOW(), 0),
 (8006, 'OTHER',      '??',         'other',    1, '????',   NOW(), NOW(), 0),
-(8007, 'QTIME_EXCEED', 'Queue Time超时', 'quality', 1, '站间等待超限', NOW(), NOW(), 0)
+(8007, 'QTIME_EXCEED', 'Queue Time超时', 'quality', 1, '站间等待超限', NOW(), NOW(), 0),
+(8008, 'PROCESS_TIME_EXCEED', 'Process Time超时', 'quality', 1, '站内加工超上限，出站后锁批', NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE
   reason_name = VALUES(reason_name),
   category = VALUES(category),

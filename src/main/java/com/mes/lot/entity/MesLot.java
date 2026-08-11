@@ -100,6 +100,9 @@ public class MesLot extends BaseEntity {
     /** Queue Time 开窗固化策略 HOLD/ALARM/HOLD_ALARM */
     private String qtimeOnViolate;
 
+    /** 本站开工按下秒表的时间；出站/返工后清空。没配加工时长的站不写 */
+    private LocalDateTime processStartedAt;
+
     /**
      * 状态：created 已创建 / released 已放行(过渡) / wait 等待加工 /
      * processing 加工中 / held 锁批 / completed 已完工 / scrapped 已报废 / merged 已合批

@@ -43,6 +43,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static com.mes.route.support.ProcessTimeBounds.validate;
+
 /**
  * 工艺路线服务实现：版本生命周期与草稿步骤维护
  */
@@ -217,6 +219,8 @@ public class MesRouteServiceImpl implements MesRouteService {
             svo.setStepType(rs.getStepType());
             svo.setAllowSkip(rs.getAllowSkip());
             svo.setMaxQueueMin(rs.getMaxQueueMin());
+            svo.setMinProcessMin(rs.getMinProcessMin());
+            svo.setMaxProcessMin(rs.getMaxProcessMin());
             MesStep step = stepMap.get(rs.getStepId());
             if (step != null) {
                 svo.setStepCode(step.getStepCode());
@@ -232,6 +236,12 @@ public class MesRouteServiceImpl implements MesRouteService {
                 }
                 if (svo.getMaxQueueMin() == null) {
                     svo.setMaxQueueMin(step.getMaxQueueMin());
+                }
+                if (svo.getMinProcessMin() == null) {
+                    svo.setMinProcessMin(step.getMinProcessMin());
+                }
+                if (svo.getMaxProcessMin() == null) {
+                    svo.setMaxProcessMin(step.getMaxProcessMin());
                 }
             }
             stepVos.add(svo);
@@ -406,6 +416,8 @@ public class MesRouteServiceImpl implements MesRouteService {
             row.setStepType(src.getStepType());
             row.setAllowSkip(src.getAllowSkip());
             row.setMaxQueueMin(src.getMaxQueueMin());
+            row.setMinProcessMin(src.getMinProcessMin());
+            row.setMaxProcessMin(src.getMaxProcessMin());
             mesRouteStepMapper.insert(row);
         }
 
@@ -894,6 +906,8 @@ public class MesRouteServiceImpl implements MesRouteService {
         row.setStepType(master.getStepType());
         row.setAllowSkip(master.getAllowSkip());
         row.setMaxQueueMin(master.getMaxQueueMin());
+        row.setMinProcessMin(master.getMinProcessMin());
+        row.setMaxProcessMin(master.getMaxProcessMin());
     }
 
     private void refreshStepAttrsFromMaster(List<MesRouteStep> steps) {
@@ -963,6 +977,8 @@ public class MesRouteServiceImpl implements MesRouteService {
                 AssertUtil.isTrue(sortNos.contains(step.getNextSortNo()),
                         "下一站顺序号不存在: " + step.getNextSortNo());
             }
+            validate(
+                    step.getMinProcessMin(), step.getMaxProcessMin());
         }
     }
 

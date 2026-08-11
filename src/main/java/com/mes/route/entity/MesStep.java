@@ -37,6 +37,12 @@ public class MesStep extends BaseEntity {
     /** 站间最大等待分钟（P1） */
     private Integer maxQueueMin;
 
+    /** 最短加工几分钟（进工艺路线快照）；空=不管下限 */
+    private Integer minProcessMin;
+
+    /** 最长加工几分钟（进工艺路线快照）；空=不管上限 */
+    private Integer maxProcessMin;
+
     /** 状态：1正常 0禁用 */
     private Integer status;
 

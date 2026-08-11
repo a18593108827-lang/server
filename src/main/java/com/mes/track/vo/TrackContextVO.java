@@ -46,4 +46,6 @@ public class TrackContextVO {
     private List<MesFutureHoldVO> pendingFutureHolds;
     /** Queue Time 开窗；无则 null */
     private TrackQueueTimeVO queueTime;
+    /** Process Time 站内加工；无则 null */
+    private TrackProcessTimeVO processTime;
 }

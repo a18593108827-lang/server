@@ -11,6 +11,7 @@ import com.mes.route.entity.MesStep;
 import com.mes.route.mapper.MesStepMapper;
 import com.mes.route.service.MesStepService;
 import com.mes.route.vo.MesStepVO;
+import com.mes.route.support.ProcessTimeBounds;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -66,6 +67,9 @@ public class MesStepServiceImpl implements MesStepService {
         step.setEqpType(blankToNull(dto.getEqpType()));
         step.setAllowSkip(dto.getAllowSkip());
         step.setMaxQueueMin(dto.getMaxQueueMin());
+        ProcessTimeBounds.validate(dto.getMinProcessMin(), dto.getMaxProcessMin());
+        step.setMinProcessMin(dto.getMinProcessMin());
+        step.setMaxProcessMin(dto.getMaxProcessMin());
         step.setRemark(blankToNull(dto.getRemark()));
         step.setStatus(1);
         mesStepMapper.insert(step);
@@ -84,6 +88,9 @@ public class MesStepServiceImpl implements MesStepService {
         step.setEqpType(blankToNull(dto.getEqpType()));
         step.setAllowSkip(dto.getAllowSkip());
         step.setMaxQueueMin(dto.getMaxQueueMin());
+        ProcessTimeBounds.validate(dto.getMinProcessMin(), dto.getMaxProcessMin());
+        step.setMinProcessMin(dto.getMinProcessMin());
+        step.setMaxProcessMin(dto.getMaxProcessMin());
         step.setRemark(blankToNull(dto.getRemark()));
         mesStepMapper.updateById(step);
     }
@@ -109,6 +116,8 @@ public class MesStepServiceImpl implements MesStepService {
         vo.setEqpType(step.getEqpType());
         vo.setAllowSkip(step.getAllowSkip());
         vo.setMaxQueueMin(step.getMaxQueueMin());
+        vo.setMinProcessMin(step.getMinProcessMin());
+        vo.setMaxProcessMin(step.getMaxProcessMin());
         vo.setStatus(step.getStatus());
         vo.setRemark(step.getRemark());
         vo.setCreateTime(step.getCreateTime());
