@@ -181,6 +181,10 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (250, 200, 2, 'route:list',      '??',     '/app/route',      'map',              15, 1, NOW(), NOW(), 0),
 (251, 250, 3, 'route:add',       '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (252, 250, 3, 'route:edit',      '????', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(253, 200, 2, 'edc:view',        '??',     '/app/edc',        'ruler',           160,1, NOW(), NOW(), 0),
+(254, 253, 3, 'edc:edit',        '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
+(255, 253, 3, 'edc:publish',     '????', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
+(256, 253, 3, 'edc:collect',     '????', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
 (260, 200, 2, 'hold:list',       '??',     '/app/hold',       'pause-circle',     16, 1, NOW(), NOW(), 0),
 (261, 260, 3, 'hold:create',     '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (262, 260, 3, 'hold:release',    '??',     NULL,              NULL,               2,  1, NOW(), NOW(), 0),
@@ -294,7 +298,11 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1134, 1, 299, NOW()),
 (1135, 1, 300, NOW()),
 (1136, 1, 301, NOW()),
-(1137, 1, 302, NOW())
+(1137, 1, 302, NOW()),
+(1138, 1, 253, NOW()),
+(1139, 1, 254, NOW()),
+(1140, 1, 255, NOW()),
+(1141, 1, 256, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor????? + ????
@@ -324,7 +332,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1418, 4, 300, NOW()),
 (1419, 4, 301, NOW()),
 (1420, 4, 302, NOW()),
-(1421, 4, 294, NOW())
+(1421, 4, 294, NOW()),
+(1422, 4, 253, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -339,7 +348,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1205, 2, 292, NOW()),
 (1206, 2, 293, NOW()),
 (1207, 2, 294, NOW()),
-(1208, 2, 302, NOW())
+(1208, 2, 302, NOW()),
+(1209, 2, 253, NOW()),
+(1210, 2, 256, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- process_eng??? + ????
@@ -372,6 +383,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1330, 3, 301, NOW()),
 (1331, 3, 302, NOW()),
 (1332, 3, 294, NOW()),
+(1333, 3, 253, NOW()),
+(1334, 3, 254, NOW()),
+(1335, 3, 255, NOW()),
+(1336, 3, 256, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -882,3 +897,113 @@ CREATE TABLE IF NOT EXISTS mes_recipe_binding (
     KEY idx_bind_eqp (eqp_id),
     KEY idx_bind_type (step_id, eqp_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='recipe step-eqp binding';
+
+-- =========================
+-- EDC (see migrate_edc.sql)
+-- =========================
+CREATE TABLE IF NOT EXISTS mes_edc_param (
+    id            BIGINT       NOT NULL COMMENT 'PK',
+    param_code    VARCHAR(64)  NOT NULL COMMENT 'param code',
+    param_name    VARCHAR(128) NOT NULL COMMENT 'param name',
+    unit          VARCHAR(32)           COMMENT 'unit',
+    value_type    VARCHAR(16)  NOT NULL DEFAULT 'NUMBER' COMMENT 'NUMBER',
+    enabled       TINYINT      NOT NULL DEFAULT 1 COMMENT '1 enabled',
+    remark        VARCHAR(256)          COMMENT 'remark',
+    version       INT          NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
+    create_by     BIGINT                COMMENT 'create by',
+    update_by     BIGINT                COMMENT 'update by',
+    create_time   DATETIME              COMMENT 'create time',
+    update_time   DATETIME              COMMENT 'update time',
+    deleted       TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_edc_param_code (param_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc param';
+
+CREATE TABLE IF NOT EXISTS mes_edc_spec (
+    id            BIGINT         NOT NULL COMMENT 'PK',
+    param_id      BIGINT         NOT NULL COMMENT 'param id',
+    product_code  VARCHAR(64)    NOT NULL DEFAULT '' COMMENT 'product; empty=all',
+    version_no    INT            NOT NULL COMMENT 'version no',
+    status        VARCHAR(16)    NOT NULL DEFAULT 'draft' COMMENT 'draft/active/obsolete',
+    usl           DECIMAL(20,8)           COMMENT 'usl',
+    lsl           DECIMAL(20,8)           COMMENT 'lsl',
+    target        DECIMAL(20,8)           COMMENT 'target',
+    remark        VARCHAR(256)            COMMENT 'remark',
+    published_at  DATETIME                COMMENT 'published at',
+    create_by     BIGINT                  COMMENT 'create by',
+    update_by     BIGINT                  COMMENT 'update by',
+    create_time   DATETIME                COMMENT 'create time',
+    update_time   DATETIME                COMMENT 'update time',
+    deleted       TINYINT        NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_edc_spec_ver (param_id, product_code, version_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc spec';
+
+CREATE TABLE IF NOT EXISTS mes_edc_plan (
+    id            BIGINT       NOT NULL COMMENT 'PK',
+    step_id       BIGINT       NOT NULL COMMENT 'step id',
+    required      TINYINT      NOT NULL DEFAULT 0 COMMENT '1 trackout gate',
+    enabled       TINYINT      NOT NULL DEFAULT 1 COMMENT '1 enabled',
+    remark        VARCHAR(256)          COMMENT 'remark',
+    version       INT          NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
+    create_by     BIGINT                COMMENT 'create by',
+    update_by     BIGINT                COMMENT 'update by',
+    create_time   DATETIME              COMMENT 'create time',
+    update_time   DATETIME              COMMENT 'update time',
+    deleted       TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_edc_plan_step (step_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc plan';
+
+CREATE TABLE IF NOT EXISTS mes_edc_plan_item (
+    id            BIGINT       NOT NULL COMMENT 'PK',
+    plan_id       BIGINT       NOT NULL COMMENT 'plan id',
+    param_id      BIGINT       NOT NULL COMMENT 'param id',
+    spec_id       BIGINT                COMMENT 'spec or follow active',
+    sort_no       INT          NOT NULL DEFAULT 0 COMMENT 'sort',
+    mandatory     TINYINT      NOT NULL DEFAULT 1 COMMENT '1 mandatory',
+    create_time   DATETIME              COMMENT 'create time',
+    update_time   DATETIME              COMMENT 'update time',
+    deleted       TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_edc_plan_param (plan_id, param_id),
+    KEY idx_edc_plan_item (plan_id, sort_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc plan item';
+
+CREATE TABLE IF NOT EXISTS mes_edc_collection (
+    id                 BIGINT       NOT NULL COMMENT 'PK',
+    lot_id             BIGINT       NOT NULL COMMENT 'lot id',
+    lot_no             VARCHAR(64)           COMMENT 'lot no',
+    route_version_id   BIGINT       NOT NULL COMMENT 'route version',
+    sort_no            INT          NOT NULL COMMENT 'sort no',
+    step_id            BIGINT       NOT NULL COMMENT 'step id',
+    track_in_tx_id     BIGINT       NOT NULL COMMENT 'track in tx',
+    plan_id            BIGINT       NOT NULL COMMENT 'plan id',
+    result             VARCHAR(16)  NOT NULL COMMENT 'PASS/FAIL',
+    source             VARCHAR(16)  NOT NULL DEFAULT 'MANUAL' COMMENT 'MANUAL/AUTO',
+    eqp_id             BIGINT                COMMENT 'eqp id',
+    remark             VARCHAR(256)          COMMENT 'remark',
+    collected_by       BIGINT                COMMENT 'collected by',
+    collected_at       DATETIME     NOT NULL COMMENT 'collected at',
+    create_time        DATETIME              COMMENT 'create time',
+    update_time        DATETIME              COMMENT 'update time',
+    deleted            TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    KEY idx_edc_col_visit (lot_id, track_in_tx_id, collected_at),
+    KEY idx_edc_col_lot_step (lot_id, step_id, collected_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc collection';
+
+CREATE TABLE IF NOT EXISTS mes_edc_collection_item (
+    id              BIGINT         NOT NULL COMMENT 'PK',
+    collection_id   BIGINT         NOT NULL COMMENT 'collection id',
+    param_id        BIGINT         NOT NULL COMMENT 'param id',
+    spec_id         BIGINT                  COMMENT 'spec used',
+    usl_snap        DECIMAL(20,8)           COMMENT 'usl snap',
+    lsl_snap        DECIMAL(20,8)           COMMENT 'lsl snap',
+    value_num       DECIMAL(20,8)  NOT NULL COMMENT 'value',
+    item_result     VARCHAR(16)    NOT NULL COMMENT 'PASS/OOS',
+    create_time     DATETIME                COMMENT 'create time',
+    deleted         TINYINT        NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    KEY idx_edc_col_item (collection_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc collection item';
