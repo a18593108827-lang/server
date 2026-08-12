@@ -1,5 +1,6 @@
 package com.mes.wip.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mes.lot.entity.MesLot;
 import com.mes.wip.entity.MesWipLot;
 import com.mes.wip.mapper.MesWipLotMapper;
@@ -31,13 +32,28 @@ public class WipProjectionServiceImpl implements WipProjectionService {
             remove(lot.getId());
             return;
         }
-        MesWipLot row = toRow(lot);
         MesWipLot existing = mesWipLotMapper.selectById(lot.getId());
         if (existing == null) {
-            mesWipLotMapper.insert(row);
-        } else {
-            mesWipLotMapper.updateById(row);
+            mesWipLotMapper.insert(toRow(lot));
+            return;
         }
+        // updateById 跳过 null，Abort/Out 腾机后 current_eqp_id 清不掉；改用 Wrapper 显式写入
+        LocalDateTime now = lot.getUpdateTime() != null ? lot.getUpdateTime() : LocalDateTime.now();
+        mesWipLotMapper.update(null, new LambdaUpdateWrapper<MesWipLot>()
+                .eq(MesWipLot::getLotId, lot.getId())
+                .set(MesWipLot::getLotNo, lot.getLotNo())
+                .set(MesWipLot::getProductCode, lot.getProductCode())
+                .set(MesWipLot::getQty, lot.getQty())
+                .set(MesWipLot::getPriority, lot.getPriority())
+                .set(MesWipLot::getHotFlag, lot.getHotFlag() == null ? 0 : lot.getHotFlag())
+                .set(MesWipLot::getCustomerLot, lot.getCustomerLot())
+                .set(MesWipLot::getStatus, lot.getStatus())
+                .set(MesWipLot::getCurrentSortNo, lot.getCurrentSortNo())
+                .set(MesWipLot::getCurrentStepId, lot.getCurrentStepId())
+                .set(MesWipLot::getCurrentEqpId, lot.getCurrentEqpId())
+                .set(MesWipLot::getRouteId, lot.getRouteId())
+                .set(MesWipLot::getRouteVersionId, lot.getRouteVersionId())
+                .set(MesWipLot::getUpdateTime, now));
     }
 
     @Override

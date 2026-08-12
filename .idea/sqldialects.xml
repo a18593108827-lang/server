@@ -24,6 +24,7 @@
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_skip.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_step_attrs.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_track.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_track_abort.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_wip.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/schema.sql" dialect="MySQL" />
   </component>

@@ -34,6 +34,8 @@ public class TrackContextVO {
     private Boolean canScrap;
     /** 是否可数量调整（wait + track:bonus） */
     private Boolean canBonus;
+    /** 是否可加工中止（processing + track:abort；Hold 中不行） */
+    private Boolean canAbort;
     private Boolean offFlow;
     private Integer offFlowAnchorSortNo;
     private Integer reworkCount;

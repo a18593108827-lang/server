@@ -4,6 +4,7 @@ import cn.dev33.satoken.annotation.SaCheckPermission;
 import cn.dev33.satoken.annotation.SaMode;
 import com.mes.common.R;
 import com.mes.common.annotation.OperLog;
+import com.mes.track.dto.TrackAbortDTO;
 import com.mes.track.dto.TrackInDTO;
 import com.mes.track.dto.TrackOffFlowDTO;
 import com.mes.track.dto.TrackOffFlowResumeDTO;
@@ -16,6 +17,7 @@ import com.mes.track.dto.TrackBonusDTO;
 import com.mes.track.dto.TrackScrapDTO;
 import com.mes.track.dto.TrackSplitDTO;
 import com.mes.track.service.TrackService;
+import com.mes.track.vo.TrackAbortReasonVO;
 import com.mes.track.vo.TrackBonusReasonVO;
 import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackContextVO;
@@ -39,7 +41,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Track 执行引擎：Release / TrackIn / TrackOut
+ * Track 执行引擎：Release / TrackIn / TrackOut / Abort
  * <p>一期不单独暴露 Move：TrackOut 自动进入下一站 wait。
  */
 @RestController
@@ -71,6 +73,21 @@ public class TrackController {
     @PostMapping("/track-out")
     public R<TrackTxnResultVO> trackOut(@Valid @RequestBody TrackOutDTO dto) {
         return R.ok(trackService.trackOut(dto.getLotId(), dto.getResultCode()));
+    }
+
+    /** 加工中止：加工中出事，回本站等待，机台腾出来 */
+    @SaCheckPermission("track:abort")
+    @OperLog(module = "Track", action = "Abort")
+    @PostMapping("/abort")
+    public R<TrackTxnResultVO> abort(@Valid @RequestBody TrackAbortDTO dto) {
+        return R.ok(trackService.abort(dto.getLotId(), dto.getReasonCode(), dto.getRemark()));
+    }
+
+    /** Abort 原因码白名单 */
+    @SaCheckPermission(value = {"track:abort", "track:view"}, mode = SaMode.OR)
+    @GetMapping("/abort/reason-codes")
+    public R<List<TrackAbortReasonVO>> abortReasonCodes() {
+        return R.ok(trackService.abortReasonCodes());
     }
 
     /** 返工回流 */

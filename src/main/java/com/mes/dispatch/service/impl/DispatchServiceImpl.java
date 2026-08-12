@@ -298,6 +298,27 @@ public class DispatchServiceImpl implements DispatchService {
         throw new BusinessException("设备被 Off-Flow 批次占用：" + holder.getLotNo());
     }
 
+    /**
+     * Abort 防御释约：开工成功后预约通常已经是 consumed，这里多半啥也不干。
+     * 万一还有 active，翻成 released，备注记 ABORT，方便对账。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public Long releaseActiveOnAbort(Long lotId, Long abortTxId) {
+        if (lotId == null) {
+            return null;
+        }
+        MesDispatchReserve active = activeOrNull(findActiveByLot(lotId, true));
+        if (active == null) {
+            return null;
+        }
+        Long reserveId = active.getId();
+        // 不写 consume_tx_id（那是开工消费用的）；备注挂上 Abort 履历 id 方便查
+        String remark = abortTxId == null ? "ABORT" : "ABORT tx=" + abortTxId;
+        leaveActive(active, RESERVE_RELEASED, remark, null);
+        return reserveId;
+    }
+
     // 获取当前批次的 active 预约；forUpdate=true 时行锁（须在事务内）
     private MesDispatchReserve findActiveByLot(Long lotId, boolean forUpdate) {
         if (lotId == null) {

@@ -4,6 +4,7 @@ import cn.dev33.satoken.stp.StpUtil;
 import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mes.common.AssertUtil;
 import com.mes.common.BusinessException;
 import com.mes.dispatch.service.DispatchService;
@@ -44,6 +45,7 @@ import com.mes.track.support.ProcessTimeSupport;
 import com.mes.track.support.QueueTimeSupport;
 import com.mes.track.support.ReworkCountStore;
 import com.mes.track.vo.MesTxLogVO;
+import com.mes.track.vo.TrackAbortReasonVO;
 import com.mes.track.vo.TrackBonusReasonVO;
 import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackBranchOptionVO;
@@ -64,6 +66,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -94,6 +97,12 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_MERGE = "MERGE"; // 合批事务类型
     public static final String TX_SCRAP = "SCRAP";
     public static final String TX_BONUS = "BONUS";
+    /** 加工中止履历类型 */
+    public static final String TX_ABORT = "ABORT";
+
+    public static final String ERR_ABORT_REASON_REQUIRED = "ABORT_REASON_REQUIRED";
+    public static final String ERR_ABORT_REASON_INVALID = "ABORT_REASON_INVALID";
+    public static final String ERR_ABORT_REMARK_REQUIRED = "ABORT_REMARK_REQUIRED";
 
     /** P0 Scrap 原因码白名单 */
     private static final List<TrackScrapReasonVO> SCRAP_REASON_CODES = List.of(
@@ -112,6 +121,16 @@ public class TrackServiceImpl implements TrackService {
             new TrackBonusReasonVO("METROLOGY_ADJ", "计量/点料修正"),
             new TrackBonusReasonVO("SYSTEM_CORR", "系统录入错误纠正"),
             new TrackBonusReasonVO("OTHER", "其他")
+    );
+
+    /** P0 Abort 原因码白名单（加工中止专用，别跟报废混） */
+    private static final List<TrackAbortReasonVO> ABORT_REASON_CODES = List.of(
+            new TrackAbortReasonVO("EQP_ABORT", "设备中止/报警"),
+            new TrackAbortReasonVO("EQP_DOWN", "设备宕机/不可用"),
+            new TrackAbortReasonVO("RECIPE_ERROR", "配方/参数错误"),
+            new TrackAbortReasonVO("OPERATOR", "人为误操作/主动中止"),
+            new TrackAbortReasonVO("PROCESS_ISSUE", "工艺异常（未到报废）"),
+            new TrackAbortReasonVO("OTHER", "其他")
     );
 
     private final MesLotMapper mesLotMapper;
@@ -878,6 +897,109 @@ public class TrackServiceImpl implements TrackService {
     }
 
     /**
+     * 加工中止：机台上干到一半出状况，合法退回本站 wait。
+     * <p>
+     * 人话：站别不动、数量不动、不是报废；把机台让出来，秒表清掉，记下为啥中止，以后还能再开工。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackTxnResultVO abort(Long lotId, String reasonCode, String remark) {
+        AssertUtil.notNull(lotId, "批次不能为空");
+        if (!StringUtils.hasText(reasonCode)) {
+            throw new BusinessException(ERR_ABORT_REASON_REQUIRED + ": 中止原因不能为空");
+        }
+        String code = reasonCode.trim();
+        if (!isAbortReasonAllowed(code)) {
+            throw new BusinessException(ERR_ABORT_REASON_INVALID + ": 原因码非法: " + code);
+        }
+        String remarkTrim = StringUtils.hasText(remark) ? remark.trim() : null;
+        if ("OTHER".equals(code) && !StringUtils.hasText(remarkTrim)) {
+            throw new BusinessException(ERR_ABORT_REMARK_REQUIRED + ": 原因码为其他时备注必填");
+        }
+
+        MesLot lot = requireExecutableLot(lotId);
+        // 锁批中先放行再说，别绕过 Hold 退站
+        holdService.assertNoActive(lotId);
+        AssertUtil.isTrue(STATUS_PROCESSING.equals(lot.getStatus()), "仅加工中状态可中止");
+        AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法中止");
+        AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
+
+        String fromStatus = lot.getStatus();
+        Integer fromSortNo = lot.getCurrentSortNo();
+        Long fromEqpId = lot.getCurrentEqpId();
+        LocalDateTime processStartedAt = lot.getProcessStartedAt();
+        Long elapsedMin = null;
+        if (processStartedAt != null) {
+            elapsedMin = Math.max(0, Duration.between(processStartedAt, LocalDateTime.now()).toMinutes());
+        }
+
+        // updateById 默认不写 null，腾机/清秒表必须用 Wrapper 显式 SET
+        long userId = StpUtil.getLoginIdAsLong();
+        int ver = lot.getVersion() == null ? 0 : lot.getVersion();
+        int rows = mesLotMapper.update(null, new LambdaUpdateWrapper<MesLot>()
+                .eq(MesLot::getId, lot.getId())
+                .eq(MesLot::getVersion, ver)
+                .set(MesLot::getStatus, STATUS_WAIT)
+                .set(MesLot::getCurrentEqpId, null)
+                .set(MesLot::getProcessStartedAt, null)
+                .set(MesLot::getUpdateBy, userId)
+                .set(MesLot::getVersion, ver + 1));
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+
+        MesLot persisted = mesLotMapper.selectById(lot.getId());
+        AssertUtil.notNull(persisted, "批次不存在");
+        AssertUtil.isTrue(STATUS_WAIT.equals(persisted.getStatus()), "中止未落库，请重试");
+        lot = persisted;
+
+        wipProjectionService.syncFromLot(lot);
+
+        // 正常开工会把预约吃掉；这里只防残留 active 还占着坑
+        Long releasedReserveId = dispatchService.releaseActiveOnAbort(lotId, null);
+
+        JSONObject ext = new JSONObject();
+        ext.set("reasonCode", code);
+        if (remarkTrim != null) {
+            ext.set("remark", remarkTrim);
+        }
+        if (processStartedAt != null) {
+            ext.set("processStartedAt", processStartedAt.toString());
+            ext.set("processElapsedMin", elapsedMin);
+        }
+        ext.set("clearedProcessTime", true);
+        if (releasedReserveId != null) {
+            ext.set("releasedReserveId", releasedReserveId);
+        }
+
+        String logRemark = remarkTrim != null ? remarkTrim : "加工中止";
+        String extJson = ext.toString();
+        if (extJson.length() > 512) {
+            ext.remove("remark");
+            extJson = ext.toString();
+            if (extJson.length() > 512) {
+                extJson = "{\"reasonCode\":\"" + code + "\",\"clearedProcessTime\":true}";
+            }
+        }
+        writeTxLog(lot, TX_ABORT, fromStatus, STATUS_WAIT, fromSortNo, fromSortNo,
+                lot.getCurrentStepId(), fromEqpId, lot.getRouteVersionId(), logRemark, null, null, extJson);
+
+        return toTxnVo(lot, TX_ABORT, false);
+    }
+
+    @Override
+    public List<TrackAbortReasonVO> abortReasonCodes() {
+        return ABORT_REASON_CODES;
+    }
+
+    private static boolean isAbortReasonAllowed(String code) {
+        for (TrackAbortReasonVO item : ABORT_REASON_CODES) {
+            if (item.getCode().equals(code)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * 回流：按快照 rework 边跳回前序站，按触发站累计次数，超限拒绝。
      * 与 TrackOut 分支不同：独立事务 + track:rework 权限。
      */
@@ -1243,6 +1365,12 @@ public class TrackServiceImpl implements TrackService {
                 && !isOffFlow(lot)
                 && lot.getRouteVersionId() != null
                 && StpUtil.hasPermission("track:bonus"));
+        // 加工中 + 有 track:abort 才能中止
+        vo.setCanAbort(STATUS_PROCESSING.equals(lot.getStatus())
+                && lot.getRouteVersionId() != null
+                && lot.getCurrentSortNo() != null
+                && !holdService.hasActive(lotId)
+                && StpUtil.hasPermission("track:abort"));
         vo.setOffFlow(isOffFlow(lot));
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);

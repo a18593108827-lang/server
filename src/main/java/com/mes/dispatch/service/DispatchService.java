@@ -39,4 +39,11 @@ public interface DispatchService {
      * excludeLotId 为当前批时可排除自身。
      */
     void assertNotOffFlowAnchored(Long eqpId, Long excludeLotId);
+
+    /**
+     * Abort 时：若这批还挂着有效预约（正常开工会已消费，一般碰不到），顺手释掉，别假占机台。
+     *
+     * @return 被释约的预约 id；没有 active 则 null
+     */
+    Long releaseActiveOnAbort(Long lotId, Long abortTxId);
 }

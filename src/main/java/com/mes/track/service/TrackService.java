@@ -5,6 +5,7 @@ import com.mes.track.vo.TrackContextVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
 import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackReleaseResultVO;
+import com.mes.track.vo.TrackAbortReasonVO;
 import com.mes.track.vo.TrackBonusReasonVO;
 import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackScrapReasonVO;
@@ -50,6 +51,15 @@ public interface TrackService {
      * 一期不单独暴露 Move，由本事务自动推进站点。
      */
     TrackTxnResultVO trackOut(Long lotId, String resultCode);
+
+    /**
+     * 加工中止：processing → 本站 wait。
+     * 站别/数量不动，机台让出来，秒表清掉；不是报废也不是跳站。
+     */
+    TrackTxnResultVO abort(Long lotId, String reasonCode, String remark);
+
+    /** Abort 原因码白名单（供 UI 下拉） */
+    List<TrackAbortReasonVO> abortReasonCodes();
 
     /** 返工回流：wait|processing → wait(目标站) */
     TrackTxnResultVO rework(Long lotId, Integer toSortNo, String reasonCode, String remark);
