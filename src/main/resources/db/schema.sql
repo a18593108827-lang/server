@@ -930,6 +930,7 @@ CREATE TABLE IF NOT EXISTS mes_edc_spec (
     target        DECIMAL(20,8)           COMMENT 'target',
     remark        VARCHAR(256)            COMMENT 'remark',
     published_at  DATETIME                COMMENT 'published at',
+    version       INT            NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
     create_by     BIGINT                  COMMENT 'create by',
     update_by     BIGINT                  COMMENT 'update by',
     create_time   DATETIME                COMMENT 'create time',

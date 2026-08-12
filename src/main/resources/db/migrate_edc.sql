@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS mes_edc_spec (
     target        DECIMAL(20,8)           COMMENT '目标（SPC预留）',
     remark        VARCHAR(256)            COMMENT '备注',
     published_at  DATETIME                COMMENT '发布时间',
+    version       INT            NOT NULL DEFAULT 0 COMMENT '乐观锁',
     create_by     BIGINT                  COMMENT '创建人',
     update_by     BIGINT                  COMMENT '更新人',
     create_time   DATETIME                COMMENT '创建时间',
@@ -183,3 +184,16 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1209, 2, 253, NOW()),
 (1210, 2, 256, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
+
+-- 已建库补乐观锁列（新建表已含 version，可重复执行）
+SET @db := DATABASE();
+SET @exists := (
+  SELECT COUNT(1) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = @db AND TABLE_NAME = 'mes_edc_spec' AND COLUMN_NAME = 'version'
+);
+SET @sql := IF(@exists = 0,
+  'ALTER TABLE mes_edc_spec ADD COLUMN version INT NOT NULL DEFAULT 0 COMMENT ''乐观锁'' AFTER published_at',
+  'SELECT 1');
+PREPARE stmt FROM @sql;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
