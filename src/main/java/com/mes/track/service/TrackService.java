@@ -48,7 +48,7 @@ public interface TrackService {
 
     /**
      * 完工：processing → 下一站 wait，或末站 completed。
-     * 一期不单独暴露 Move，由本事务自动推进站点。
+     * 加工站主路径仍由此推进；未加工只搬家请用 {@link #move}。
      */
     TrackTxnResultVO trackOut(Long lotId, String resultCode);
 
@@ -60,6 +60,12 @@ public interface TrackService {
 
     /** Abort 原因码白名单（供 UI 下拉） */
     List<TrackAbortReasonVO> abortReasonCodes();
+
+    /**
+     * 独立移站：wait → 合法下一站 wait。
+     * 人话：本站没干活，只把批挪到工艺规定的下一站；不是完工，也不是跳站。
+     */
+    TrackTxnResultVO move(Long lotId, Integer toSortNo, String remark);
 
     /** 返工回流：wait|processing → wait(目标站) */
     TrackTxnResultVO rework(Long lotId, Integer toSortNo, String reasonCode, String remark);

@@ -36,6 +36,12 @@ public class TrackContextVO {
     private Boolean canBonus;
     /** 是否可加工中止（processing + track:abort；Hold 中不行） */
     private Boolean canAbort;
+    /** 是否可独立移站（wait + 有下一站 + track:move；Hold/旁路不行） */
+    private Boolean canMove;
+    /** 默认下一站序号（没有下一站则 null） */
+    private Integer nextSortNo;
+    /** 默认下一站名称（方便按钮旁直接展示） */
+    private String nextStepName;
     private Boolean offFlow;
     private Integer offFlowAnchorSortNo;
     private Integer reworkCount;

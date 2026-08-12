@@ -190,7 +190,7 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (291, 290, 3, 'track:track-in',  'Track In', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (292, 290, 3, 'track:track-out', 'Track Out',NULL,              NULL,               2,  1, NOW(), NOW(), 0),
 (293, 290, 3, 'track:release',   '??',     NULL,              NULL,               3,  1, NOW(), NOW(), 0),
-(294, 290, 3, 'track:move',      '??',     NULL,              NULL,               4,  1, NOW(), NOW(), 0),
+(294, 290, 3, 'track:move',      '独立移站', NULL,            NULL,               4,  1, NOW(), NOW(), 0),
 (295, 290, 3, 'track:rework',    '返工',   NULL,              NULL,               5,  1, NOW(), NOW(), 0),
 (296, 290, 3, 'track:skip',      '跳站',   NULL,              NULL,               6,  1, NOW(), NOW(), 0),
 (297, 290, 3, 'track:off-flow',   '临时离线', NULL,            NULL,               7,  1, NOW(), NOW(), 0),
@@ -323,7 +323,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1417, 4, 299, NOW()),
 (1418, 4, 300, NOW()),
 (1419, 4, 301, NOW()),
-(1420, 4, 302, NOW())
+(1420, 4, 302, NOW()),
+(1421, 4, 294, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -370,6 +371,7 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1329, 3, 300, NOW()),
 (1330, 3, 301, NOW()),
 (1331, 3, 302, NOW()),
+(1332, 3, 294, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),

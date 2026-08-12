@@ -99,10 +99,19 @@ public class TrackServiceImpl implements TrackService {
     public static final String TX_BONUS = "BONUS";
     /** 加工中止履历类型 */
     public static final String TX_ABORT = "ABORT";
+    /** 独立移站履历类型（没加工，只搬家） */
+    public static final String TX_MOVE = "MOVE";
 
     public static final String ERR_ABORT_REASON_REQUIRED = "ABORT_REASON_REQUIRED";
     public static final String ERR_ABORT_REASON_INVALID = "ABORT_REASON_INVALID";
     public static final String ERR_ABORT_REMARK_REQUIRED = "ABORT_REMARK_REQUIRED";
+
+    public static final String ERR_MOVE_NOT_WAIT = "MOVE_NOT_WAIT";
+    public static final String ERR_MOVE_NO_NEXT = "MOVE_NO_NEXT";
+    public static final String ERR_MOVE_TARGET_NOT_NEXT = "MOVE_TARGET_NOT_NEXT";
+    public static final String ERR_MOVE_DIRTY_EQP = "MOVE_DIRTY_EQP";
+    public static final String ERR_MOVE_DIRTY_PROCESS_TIME = "MOVE_DIRTY_PROCESS_TIME";
+    public static final String ERR_MOVE_OFF_FLOW = "MOVE_OFF_FLOW";
 
     /** P0 Scrap 原因码白名单 */
     private static final List<TrackScrapReasonVO> SCRAP_REASON_CODES = List.of(
@@ -1000,6 +1009,107 @@ public class TrackServiceImpl implements TrackService {
     }
 
     /**
+     * 独立移站：人/物流把批挪到下一站，但本站没干活。
+     * <p>
+     * 人话：状态还是 wait，只换站号；不能乱跳，只能去工艺规定的下一站；末站想结批请走完工，别用搬家冒充。
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public TrackTxnResultVO move(Long lotId, Integer toSortNo, String remark) {
+        AssertUtil.notNull(lotId, "批次不能为空");
+
+        MesLot lot = requireExecutableLot(lotId);
+        holdService.assertNoActive(lotId);
+
+        if (!STATUS_WAIT.equals(lot.getStatus())) {
+            throw new BusinessException(ERR_MOVE_NOT_WAIT + ": 仅等待状态可移站，加工中请先完工或中止");
+        }
+        if (isOffFlow(lot)) {
+            throw new BusinessException(ERR_MOVE_OFF_FLOW + ": Off-Flow 中不可移站");
+        }
+        AssertUtil.notNull(lot.getCurrentSortNo(), "当前站未知，无法移站");
+        AssertUtil.notNull(lot.getRouteVersionId(), "未绑定路线版本");
+
+        if (lot.getCurrentEqpId() != null) {
+            throw new BusinessException(ERR_MOVE_DIRTY_EQP + ": 批次仍占着机台，请先中止或完工");
+        }
+        if (lot.getProcessStartedAt() != null) {
+            throw new BusinessException(ERR_MOVE_DIRTY_PROCESS_TIME + ": 批次仍有加工计时，请先中止或完工");
+        }
+
+        MesRouteStep current = requireCurrentStep(lot);
+        // 跟 TrackOut 默认推进同一套 next，避免两套算法对不齐
+        RouteTrackOutDecision decision = routeEdgeResolver.resolveTrackOut(
+                lot.getRouteVersionId(), current, null);
+        if (decision.isCompleted() || decision.getToSortNo() == null || decision.getToStepId() == null) {
+            throw new BusinessException(ERR_MOVE_NO_NEXT + ": 已无下一站，末站请走完工，不可用移站结批");
+        }
+        if (toSortNo != null && !Objects.equals(toSortNo, decision.getToSortNo())) {
+            throw new BusinessException(ERR_MOVE_TARGET_NOT_NEXT
+                    + ": 目标站必须是下一站 sortNo=" + decision.getToSortNo());
+        }
+
+        String fromStatus = lot.getStatus();
+        Integer fromSortNo = lot.getCurrentSortNo();
+        Long fromStepId = lot.getCurrentStepId();
+        Integer targetSortNo = decision.getToSortNo();
+        Long targetStepId = decision.getToStepId();
+
+        long userId = StpUtil.getLoginIdAsLong();
+        int ver = lot.getVersion() == null ? 0 : lot.getVersion();
+        int rows = mesLotMapper.update(null, new LambdaUpdateWrapper<MesLot>()
+                .eq(MesLot::getId, lot.getId())
+                .eq(MesLot::getVersion, ver)
+                .eq(MesLot::getStatus, STATUS_WAIT)
+                .set(MesLot::getCurrentSortNo, targetSortNo)
+                .set(MesLot::getCurrentStepId, targetStepId)
+                .set(MesLot::getUpdateBy, userId)
+                .set(MesLot::getVersion, ver + 1));
+        AssertUtil.isTrue(rows > 0, "数据已被他人修改，请刷新后重试");
+
+        MesLot persisted = mesLotMapper.selectById(lot.getId());
+        AssertUtil.notNull(persisted, "批次不存在");
+        AssertUtil.isTrue(Objects.equals(persisted.getCurrentSortNo(), targetSortNo), "移站未落库，请重试");
+        lot = persisted;
+
+        wipProjectionService.syncFromLot(lot);
+
+        // 站已经换了，站间等待窗跟 TrackOut 推进共用同一套开窗逻辑
+        queueTimeSupport.openAfterTrackOut(lot, fromSortNo, decision);
+
+        String remarkTrim = StringUtils.hasText(remark) ? remark.trim() : null;
+        JSONObject ext = new JSONObject();
+        ext.set("fromSortNo", fromSortNo);
+        ext.set("toSortNo", targetSortNo);
+        ext.set("fromStepId", fromStepId);
+        ext.set("toStepId", targetStepId);
+        ext.set("moveKind", "NEXT");
+        if (decision.getEdge() != null) {
+            ext.set("edgeId", String.valueOf(decision.getEdge().getId()));
+            ext.set("edgeType", decision.getEdge().getEdgeType());
+        }
+        if (remarkTrim != null) {
+            ext.set("remark", remarkTrim);
+        }
+        String extJson = ext.toString();
+        if (extJson.length() > 512) {
+            ext.remove("remark");
+            extJson = ext.toString();
+        }
+
+        String logRemark = remarkTrim != null ? remarkTrim : "独立移站";
+        writeTxLog(lot, TX_MOVE, fromStatus, STATUS_WAIT, fromSortNo, targetSortNo,
+                fromStepId, null, lot.getRouteVersionId(), logRemark, null, null, extJson);
+
+        // 到了新站等待，按预约锁批 PRE 时机检查（跟 Skip 一样）
+        if (lot.getCurrentSortNo() != null && !"held".equals(lot.getStatus())) {
+            futureHoldService.tryActivate(lot, lot.getCurrentSortNo(), FutureHoldServiceImpl.TIMING_PRE);
+        }
+
+        return toTxnVo(lot, TX_MOVE, false);
+    }
+
+    /**
      * 回流：按快照 rework 边跳回前序站，按触发站累计次数，超限拒绝。
      * 与 TrackOut 分支不同：独立事务 + track:rework 权限。
      */
@@ -1371,6 +1481,10 @@ public class TrackServiceImpl implements TrackService {
                 && lot.getCurrentSortNo() != null
                 && !holdService.hasActive(lotId)
                 && StpUtil.hasPermission("track:abort"));
+        // 独立移站先默认 false，有下一站再打开
+        vo.setCanMove(false);
+        vo.setNextSortNo(null);
+        vo.setNextStepName(null);
         vo.setOffFlow(isOffFlow(lot));
         vo.setOffFlowAnchorSortNo(lot.getOffFlowAnchorSort());
         vo.setReworkCount(lot.getCurrentSortNo() != null ? reworkCountStore.get(lot, lot.getCurrentSortNo()) : 0);
@@ -1398,7 +1512,16 @@ public class TrackServiceImpl implements TrackService {
 
         MesRouteStep next = routeEdgeResolver.resolveDefaultNext(lot.getRouteVersionId(), current);
         if (next != null) {
-            vo.setNextStep(toStepVo(next));
+            MesLotStepVO nextVo = toStepVo(next);
+            vo.setNextStep(nextVo);
+            vo.setNextSortNo(next.getSortNo());
+            vo.setNextStepName(nextVo.getStepName());
+            // wait + 有下一站 + 没占机 + 有权限 → 可以只搬家
+            vo.setCanMove(STATUS_WAIT.equals(lot.getStatus())
+                    && !isOffFlow(lot)
+                    && lot.getCurrentEqpId() == null
+                    && !holdService.hasActive(lotId)
+                    && StpUtil.hasPermission("track:move"));
         }
 
         List<MesRouteEdge> outEdges = routeEdgeResolver.listNormalAndBranch(

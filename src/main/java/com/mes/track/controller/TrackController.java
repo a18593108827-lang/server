@@ -6,6 +6,7 @@ import com.mes.common.R;
 import com.mes.common.annotation.OperLog;
 import com.mes.track.dto.TrackAbortDTO;
 import com.mes.track.dto.TrackInDTO;
+import com.mes.track.dto.TrackMoveDTO;
 import com.mes.track.dto.TrackOffFlowDTO;
 import com.mes.track.dto.TrackOffFlowResumeDTO;
 import com.mes.track.dto.TrackOutDTO;
@@ -41,8 +42,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * Track 执行引擎：Release / TrackIn / TrackOut / Abort
- * <p>一期不单独暴露 Move：TrackOut 自动进入下一站 wait。
+ * Track 执行引擎：Release / TrackIn / TrackOut / Abort / Move
  */
 @RestController
 @RequestMapping("/track")
@@ -88,6 +88,14 @@ public class TrackController {
     @GetMapping("/abort/reason-codes")
     public R<List<TrackAbortReasonVO>> abortReasonCodes() {
         return R.ok(trackService.abortReasonCodes());
+    }
+
+    /** 独立移站：没加工，只挪到工艺下一站 */
+    @SaCheckPermission("track:move")
+    @OperLog(module = "Track", action = "Move")
+    @PostMapping("/move")
+    public R<TrackTxnResultVO> move(@Valid @RequestBody TrackMoveDTO dto) {
+        return R.ok(trackService.move(dto.getLotId(), dto.getToSortNo(), dto.getRemark()));
     }
 
     /** 返工回流 */
