@@ -7,8 +7,6 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.mes.alarm.service.AlarmService;
 import com.mes.common.AssertUtil;
 import com.mes.common.BusinessException;
-import com.mes.hold.dto.MesHoldCreateDTO;
-import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.route.entity.MesRouteEdge;
@@ -20,6 +18,7 @@ import com.mes.track.mapper.MesTxLogMapper;
 import com.mes.track.vo.TrackQueueTimeVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -49,8 +48,8 @@ public class QueueTimeSupport {
     private final MesLotMapper mesLotMapper;
     private final MesRouteEdgeMapper mesRouteEdgeMapper;
     private final MesTxLogMapper mesTxLogMapper;
-    private final HoldService holdService;
     private final AlarmService alarmService;
+    private final ObjectProvider<QueueTimeExpireHandler> expireHandlerProvider;
 
     @Value("${mes.qtime.enabled:true}")
     private boolean enabled;
@@ -105,14 +104,25 @@ public class QueueTimeSupport {
         return lot.getQtimeToSort() != null && lot.getQtimeStartedAt() != null && lot.getQtimeMaxMin() != null;
     }
 
+    /** 开窗已超过固化上限 */
+    public boolean isExpired(MesLot lot) {
+        return hasWindow(lot) && elapsedMin(lot) > lot.getQtimeMaxMin();
+    }
+
+    public long elapsedMin(MesLot lot) {
+        if (lot.getQtimeStartedAt() == null) {
+            return 0;
+        }
+        return Math.max(0, Duration.between(lot.getQtimeStartedAt(), LocalDateTime.now()).toMinutes());
+    }
+
     /** 组装现场台 context 的 queueTime；无开窗返回 null */
     public TrackQueueTimeVO toContextVo(MesLot lot) {
         if (!hasWindow(lot)) {
             return null;
         }
-        LocalDateTime now = LocalDateTime.now();
-        long elapsed = Math.max(0, Duration.between(lot.getQtimeStartedAt(), now).toMinutes());// 开窗时间
-        long remain = lot.getQtimeMaxMin() - elapsed;// 剩余时间
+        long elapsed = elapsedMin(lot);
+        long remain = lot.getQtimeMaxMin() - elapsed;
         TrackQueueTimeVO vo = new TrackQueueTimeVO();
         vo.setFromSortNo(lot.getQtimeFromSort());
         vo.setToSortNo(lot.getQtimeToSort());
@@ -121,7 +131,7 @@ public class QueueTimeSupport {
         vo.setElapsedMin(elapsed);
         vo.setRemainMin(remain);
         vo.setOnViolate(lot.getQtimeOnViolate());
-        vo.setViolated(elapsed > lot.getQtimeMaxMin());
+        vo.setViolated(isExpired(lot));
         return vo;
     }
 
@@ -171,58 +181,49 @@ public class QueueTimeSupport {
     }
 
     /**
-     * TrackIn 前结算开窗：未超时则关窗放行；超时按策略 Alarm/Hold，需拦截则抛 BusinessException。
-     * 仅当前站等于开窗目标站时处理。
+     * TrackIn 前结算开窗：未超时则目标站关窗放行；超时 HOLD 走独立事务锁批清窗后拒进站。
      */
     public void assertAndSettleOnTrackIn(MesLot lot) {
         if (!enabled || !hasWindow(lot)) {
             return;
         }
-        if (!lot.getQtimeToSort().equals(lot.getCurrentSortNo())) {
-            return;
-        }
-        LocalDateTime now = LocalDateTime.now();
-        long elapsed = Math.max(0, Duration.between(lot.getQtimeStartedAt(), now).toMinutes());// 开窗时间
-        if (elapsed <= lot.getQtimeMaxMin()) {
+        if (isExpired(lot)) {
+            String policy = resolvePolicy(lot.getQtimeOnViolate());
+            boolean needAlarm = ALARM.equals(policy) || HOLD_ALARM.equals(policy);
+            boolean needHold = HOLD.equals(policy) || HOLD_ALARM.equals(policy);
+            boolean block = needHold || (ALARM.equals(policy) && alarmOnlyBlock);
+            if (needHold) {
+                expireHandlerProvider.getObject().enforceIfExpired(lot.getId());
+                MesLot fresh = mesLotMapper.selectById(lot.getId());
+                if (fresh != null) {
+                    lot.setStatus(fresh.getStatus());
+                    lot.setVersion(fresh.getVersion());
+                    lot.setQtimeFromSort(fresh.getQtimeFromSort());
+                    lot.setQtimeToSort(fresh.getQtimeToSort());
+                    lot.setQtimeStartedAt(fresh.getQtimeStartedAt());
+                    lot.setQtimeMaxMin(fresh.getQtimeMaxMin());
+                    lot.setQtimeOnViolate(fresh.getQtimeOnViolate());
+                }
+            } else if (needAlarm) {
+                long elapsed = elapsedMin(lot);
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("lotId", lot.getId());
+                payload.put("lotNo", lot.getLotNo());
+                payload.put("fromSortNo", lot.getQtimeFromSort());
+                payload.put("toSortNo", lot.getQtimeToSort());
+                payload.put("elapsedMin", elapsed);
+                payload.put("maxMin", lot.getQtimeMaxMin());
+                alarmService.raise(REASON_QTIME_EXCEED,
+                        "Queue Time 超时: " + elapsed + "/" + lot.getQtimeMaxMin() + " 分钟", payload);
+            }
+            if (block) {
+                throw new BusinessException("Queue Time 已超时，禁止开工");
+            }
             clearPersisted(lot);
             return;
         }
-        String policy = resolvePolicy(lot.getQtimeOnViolate());// 获取拒绝策略
-        boolean needAlarm = ALARM.equals(policy) || HOLD_ALARM.equals(policy);
-        boolean needHold = HOLD.equals(policy) || HOLD_ALARM.equals(policy);
-        boolean block = needHold || (ALARM.equals(policy) && alarmOnlyBlock);
-        // 不同的策略用不同的方式处理
-        if (needAlarm) {
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("lotId", lot.getId());
-            payload.put("lotNo", lot.getLotNo());
-            payload.put("fromSortNo", lot.getQtimeFromSort());
-            payload.put("toSortNo", lot.getQtimeToSort());
-            payload.put("elapsedMin", elapsed);
-            payload.put("maxMin", lot.getQtimeMaxMin());
-            alarmService.raise(REASON_QTIME_EXCEED,
-                    "Queue Time 超时: " + elapsed + "/" + lot.getQtimeMaxMin() + " 分钟", payload);
-        }
-        if (needHold) {
-            MesHoldCreateDTO dto = new MesHoldCreateDTO();
-            dto.setLotId(lot.getId());
-            dto.setReasonCode(REASON_QTIME_EXCEED);
-            dto.setRemark(String.format("QTime %d→%d 超时 elapsed=%d max=%d",
-                    lot.getQtimeFromSort(), lot.getQtimeToSort(), elapsed, lot.getQtimeMaxMin()));
-            holdService.create(dto);
-            MesLot fresh = mesLotMapper.selectById(lot.getId());
-            if (fresh != null) {
-                lot.setStatus(fresh.getStatus());
-                lot.setVersion(fresh.getVersion());
-                lot.setQtimeFromSort(fresh.getQtimeFromSort());
-                lot.setQtimeToSort(fresh.getQtimeToSort());
-                lot.setQtimeStartedAt(fresh.getQtimeStartedAt());
-                lot.setQtimeMaxMin(fresh.getQtimeMaxMin());
-                lot.setQtimeOnViolate(fresh.getQtimeOnViolate());
-            }
-        }
-        if (block) {
-            throw new BusinessException("Queue Time 已超时，禁止开工");
+        if (!lot.getQtimeToSort().equals(lot.getCurrentSortNo())) {
+            return;
         }
         clearPersisted(lot);
     }

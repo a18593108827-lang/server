@@ -44,6 +44,7 @@ mes:
     default-on-violate: HOLD
     alarm-only-block: true
     fail-open: true
+    scan-ms: 30000
   # 站内加工时长：开工计时，太短不让出站，太长出站后锁批
   process-time:
     enabled: true

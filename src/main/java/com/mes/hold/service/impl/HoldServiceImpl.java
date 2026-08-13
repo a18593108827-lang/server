@@ -45,6 +45,8 @@ public class HoldServiceImpl implements HoldService {
     public static final String TX_HOLD = "HOLD";
     public static final String TX_RELEASE_HOLD = "RELEASE_HOLD";
     public static final String REASON_OTHER = "OTHER";
+    public static final String REASON_QTIME_EXCEED = "QTIME_EXCEED";
+    private static final String SYSTEM_USER_NAME = "SYSTEM";
 
     private final MesHoldMapper mesHoldMapper;
     private final MesHoldReasonMapper mesHoldReasonMapper;
@@ -117,9 +119,8 @@ public class HoldServiceImpl implements HoldService {
             AssertUtil.isTrue(StringUtils.hasText(dto.getRemark()), "原因码为其它时须填写备注");
         }
 
-        long userId = StpUtil.getLoginIdAsLong();
-        SysUser user = sysUserMapper.selectById(userId);
-        String userName = user != null ? user.getUserName() : null;
+        Long userId = resolveOperUserId();
+        String userName = resolveOperUserName(userId);
         LocalDateTime now = LocalDateTime.now();
 
         String prevStatus = lot.getStatus();
@@ -159,10 +160,12 @@ public class HoldServiceImpl implements HoldService {
         MesLot lot = mesLotMapper.selectById(hold.getLotId());
         AssertUtil.notNull(lot, "批次不存在");
         AssertUtil.isTrue(STATUS_HELD.equals(lot.getStatus()), "批次当前非锁批状态");
+        if (REASON_QTIME_EXCEED.equals(hold.getReasonCode())) {
+            AssertUtil.isTrue(StringUtils.hasText(remark), "Queue Time 解锁须填写备注");
+        }
 
-        long userId = StpUtil.getLoginIdAsLong();
-        SysUser user = sysUserMapper.selectById(userId);
-        String userName = user != null ? user.getUserName() : null;
+        Long userId = resolveOperUserId();
+        String userName = resolveOperUserName(userId);
         LocalDateTime now = LocalDateTime.now();
 
         String restore = StringUtils.hasText(hold.getPrevStatus()) ? hold.getPrevStatus() : STATUS_WAIT;
@@ -217,9 +220,25 @@ public class HoldServiceImpl implements HoldService {
         AssertUtil.isTrue(false, "批次已锁批：" + name);
     }
 
-    private void writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus, String remark) {
-        long userId = StpUtil.getLoginIdAsLong();
+    private Long resolveOperUserId() {
+        try {
+            return StpUtil.getLoginIdAsLong();
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private String resolveOperUserName(Long userId) {
+        if (userId == null) {
+            return SYSTEM_USER_NAME;
+        }
         SysUser user = sysUserMapper.selectById(userId);
+        return user != null ? user.getUserName() : SYSTEM_USER_NAME;
+    }
+
+    private void writeTxLog(MesLot lot, String txType, String fromStatus, String toStatus, String remark) {
+        Long userId = resolveOperUserId();
+        String userName = resolveOperUserName(userId);
         MesTxLog log = new MesTxLog();
         log.setLotId(lot.getId());
         log.setLotNo(lot.getLotNo());
@@ -233,7 +252,7 @@ public class HoldServiceImpl implements HoldService {
         log.setRouteVersionId(lot.getRouteVersionId());
         log.setRemark(remark);
         log.setOperUserId(userId);
-        log.setOperUserName(user != null ? user.getUserName() : null);
+        log.setOperUserName(userName);
         log.setCreateTime(LocalDateTime.now());
         mesTxLogMapper.insert(log);
     }
