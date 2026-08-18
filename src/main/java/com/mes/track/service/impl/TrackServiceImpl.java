@@ -14,6 +14,7 @@ import com.mes.equipment.service.MesEqpService;
 import com.mes.hold.service.FutureHoldService;
 import com.mes.hold.service.HoldService;
 import com.mes.hold.service.impl.FutureHoldServiceImpl;
+import com.mes.edc.facade.EdcFacade;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.entity.MesLotGenealogy;
 import com.mes.lot.mapper.MesLotGenealogyMapper;
@@ -157,6 +158,7 @@ public class TrackServiceImpl implements TrackService {
     private final MesEqpMapper mesEqpMapper;
     private final DispatchService dispatchService;
     private final RecipeFacade recipeFacade;
+    private final EdcFacade edcFacade;
     private final RouteEdgeResolver routeEdgeResolver;
     private final ReworkCountStore reworkCountStore;
     private final OffFlowCountStore offFlowCountStore;
@@ -852,6 +854,9 @@ public class TrackServiceImpl implements TrackService {
 
         // 太短直接拒；太长只打标记，出站成功后再锁批
         ProcessTimeSupport.SettleResult ptSettle = processTimeSupport.assertOnTrackOut(lot, current);
+        // 这站要采但没合格，拦住，不写出站履历
+        edcFacade.assertClearToTrackOut(
+                lot.getId(), lot.getRouteVersionId(), lot.getCurrentSortNo(), current.getStepId());
 
         // 旁路末站无下一站：不完工，走 Resume 回锚点
         if (decision.isCompleted() && isOffFlow(lot)) {
