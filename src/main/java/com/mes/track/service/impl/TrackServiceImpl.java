@@ -15,6 +15,7 @@ import com.mes.hold.service.FutureHoldService;
 import com.mes.hold.service.HoldService;
 import com.mes.hold.service.impl.FutureHoldServiceImpl;
 import com.mes.edc.facade.EdcFacade;
+import com.mes.edc.vo.EdcGateResult;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.entity.MesLotGenealogy;
 import com.mes.lot.mapper.MesLotGenealogyMapper;
@@ -51,6 +52,7 @@ import com.mes.track.vo.TrackBonusReasonVO;
 import com.mes.track.vo.TrackBonusResultVO;
 import com.mes.track.vo.TrackBranchOptionVO;
 import com.mes.track.vo.TrackContextVO;
+import com.mes.track.vo.TrackEdcVO;
 import com.mes.track.vo.TrackMergeCandidateVO;
 import com.mes.track.vo.TrackMergeResultVO;
 import com.mes.track.vo.TrackOffFlowOptionVO;
@@ -1496,6 +1498,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setPendingFutureHolds(futureHoldService.listPendingByLot(lotId));
         vo.setQueueTime(queueTimeSupport.toContextVo(lot));
         vo.setProcessTime(null); // 加工中才有倒计时，下面按当前站补
+        vo.setEdc(null);
 
         if (lot.getRouteVersionId() != null) {
             MesRouteVersion version = mesRouteVersionMapper.selectById(lot.getRouteVersionId());
@@ -1514,6 +1517,7 @@ public class TrackServiceImpl implements TrackService {
         }
         vo.setCurrentStep(toStepVo(current));
         vo.setProcessTime(processTimeSupport.toContextVo(lot, current));
+        fillEdcGate(vo, lot, current);
 
         MesRouteStep next = routeEdgeResolver.resolveDefaultNext(lot.getRouteVersionId(), current);
         if (next != null) {
@@ -1688,6 +1692,24 @@ public class TrackServiceImpl implements TrackService {
                     && StpUtil.hasPermission("track:off-flow"));
         }
         return vo;
+    }
+
+    /** 加工中才问量测：过不了就把完工按钮灭掉。 */
+    private void fillEdcGate(TrackContextVO vo, MesLot lot, MesRouteStep current) {
+        if (!STATUS_PROCESSING.equals(lot.getStatus()) || current == null || current.getStepId() == null) {
+            return;
+        }
+        EdcGateResult gate = edcFacade.evaluateGate(
+                lot.getId(), lot.getRouteVersionId(), lot.getCurrentSortNo(), current.getStepId());
+        TrackEdcVO edc = new TrackEdcVO();
+        edc.setRequired(gate.isRequired());
+        edc.setClear(gate.isClear());
+        edc.setReasonCode(gate.getReasonCode());
+        edc.setMessage(gate.getMessage());
+        vo.setEdc(edc);
+        if (Boolean.TRUE.equals(vo.getCanTrackOut()) && !gate.isClear()) {
+            vo.setCanTrackOut(false);
+        }
     }
 
     private static void fillStepLabels(TrackBranchOptionVO opt, MesRouteStep target, Map<Long, MesStep> stepMap) {
