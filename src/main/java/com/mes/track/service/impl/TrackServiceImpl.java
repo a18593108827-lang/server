@@ -16,6 +16,8 @@ import com.mes.hold.service.HoldService;
 import com.mes.hold.service.impl.FutureHoldServiceImpl;
 import com.mes.edc.facade.EdcFacade;
 import com.mes.edc.vo.EdcGateResult;
+import com.mes.history.facade.HistoryFacade;
+import com.mes.history.vo.HistoryTxVO;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.entity.MesLotGenealogy;
 import com.mes.lot.mapper.MesLotGenealogyMapper;
@@ -46,7 +48,6 @@ import com.mes.track.support.OffFlowCountStore;
 import com.mes.track.support.ProcessTimeSupport;
 import com.mes.track.support.QueueTimeSupport;
 import com.mes.track.support.ReworkCountStore;
-import com.mes.track.vo.MesTxLogVO;
 import com.mes.track.vo.TrackAbortReasonVO;
 import com.mes.track.vo.TrackBonusReasonVO;
 import com.mes.track.vo.TrackBonusResultVO;
@@ -161,6 +162,7 @@ public class TrackServiceImpl implements TrackService {
     private final DispatchService dispatchService;
     private final RecipeFacade recipeFacade;
     private final EdcFacade edcFacade;
+    private final HistoryFacade historyFacade;
     private final RouteEdgeResolver routeEdgeResolver;
     private final ReworkCountStore reworkCountStore;
     private final OffFlowCountStore offFlowCountStore;
@@ -1734,53 +1736,10 @@ public class TrackServiceImpl implements TrackService {
         }
     }
 
+    /** 履历读路径已搬到 History；这里只转发，别再写第二套 SQL。 */
     @Override
-    public List<MesTxLogVO> history(Long lotId) {
-        MesLot lot = mesLotMapper.selectById(lotId);
-        AssertUtil.notNull(lot, "批次不存在");
-
-        List<MesTxLog> rows = mesTxLogMapper.selectList(new LambdaQueryWrapper<MesTxLog>()
-                .eq(MesTxLog::getLotId, lotId)
-                .orderByAsc(MesTxLog::getCreateTime)
-                .orderByAsc(MesTxLog::getId));
-        if (rows.isEmpty()) {
-            return Collections.emptyList();
-        }
-
-        Set<Long> stepIds = rows.stream()
-                .map(MesTxLog::getStepId)
-                .filter(Objects::nonNull)
-                .collect(Collectors.toSet());
-        Map<Long, String> stepNameMap = stepIds.isEmpty()
-                ? Collections.emptyMap()
-                : mesStepMapper.selectBatchIds(stepIds).stream()
-                .collect(Collectors.toMap(MesStep::getId, MesStep::getStepName, (a, b) -> a));
-
-        List<MesTxLogVO> list = new ArrayList<>(rows.size());
-        for (MesTxLog row : rows) {
-            MesTxLogVO item = new MesTxLogVO();
-            item.setId(row.getId());
-            item.setLotId(row.getLotId());
-            item.setLotNo(row.getLotNo());
-            item.setTxType(row.getTxType());
-            item.setFromStatus(row.getFromStatus());
-            item.setToStatus(row.getToStatus());
-            item.setFromSortNo(row.getFromSortNo());
-            item.setToSortNo(row.getToSortNo());
-            item.setStepId(row.getStepId());
-            item.setStepName(row.getStepId() != null ? stepNameMap.get(row.getStepId()) : null);
-            item.setEqpId(row.getEqpId());
-            item.setRecipeId(row.getRecipeId());
-            item.setRecipeVersionId(row.getRecipeVersionId());
-            item.setRouteVersionId(row.getRouteVersionId());
-            item.setRemark(row.getRemark());
-            item.setExtJson(row.getExtJson());
-            item.setOperUserId(row.getOperUserId());
-            item.setOperUserName(row.getOperUserName());
-            item.setCreateTime(row.getCreateTime());
-            list.add(item);
-        }
-        return list;
+    public List<HistoryTxVO> history(Long lotId) {
+        return historyFacade.listByLot(lotId);
     }
 
     private MesLotStepVO toStepVo(MesRouteStep row) {
