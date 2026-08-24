@@ -22,6 +22,8 @@ import com.mes.edc.mapper.MesEdcSpecMapper;
 import com.mes.edc.service.MesEdcCollectionService;
 import com.mes.edc.vo.MesEdcCollectionItemVO;
 import com.mes.edc.vo.MesEdcCollectionVO;
+import com.mes.hold.dto.MesHoldCreateDTO;
+import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.route.entity.MesStep;
@@ -29,6 +31,7 @@ import com.mes.route.mapper.MesStepMapper;
 import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -60,6 +63,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     public static final String TX_TRACK_IN = "TRACK_IN";
     public static final String STATUS_PROCESSING = "processing";
     public static final String SPEC_ACTIVE = "active";
+    public static final String REASON_EDC_OOS = "EDC_OOS";
     public static final int ENABLED = 1;
     public static final int MANDATORY = 1;
 
@@ -72,6 +76,10 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     private final MesLotMapper mesLotMapper;
     private final MesTxLogMapper mesTxLogMapper;
     private final MesStepMapper mesStepMapper;
+    private final HoldService holdService;
+
+    @Value("${mes.edc.auto-hold-on-oos:false}")
+    private boolean autoHoldOnOos;
 
     @Override
     public PageResult<MesEdcCollectionVO> page(MesEdcCollectionQuery query) {
@@ -236,7 +244,22 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
             mesEdcCollectionItemMapper.insert(row);
         }
 
+        if (anyOos) {
+            holdOnOos(lot, head);
+        }
+
         return toDetailVo(head);
+    }
+
+    private void holdOnOos(MesLot lot, MesEdcCollection head) {
+        if (!autoHoldOnOos || holdService.hasActive(lot.getId())) {
+            return;
+        }
+        MesHoldCreateDTO dto = new MesHoldCreateDTO();
+        dto.setLotId(lot.getId());
+        dto.setReasonCode(REASON_EDC_OOS);
+        dto.setRemark("量测超规 collectionId=" + head.getId());
+        holdService.create(dto);
     }
 
     /** 指定 spec 用指定的；空则产品维 active，没有再兜全产品默认 */

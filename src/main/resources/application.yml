@@ -53,3 +53,5 @@ mes:
   edc:
     # false=应急关闸，required 站也放行；不删 Plan
     gate-enabled: true
+    # OOS 采集后自动锁批；缺必采不挂
+    auto-hold-on-oos: false
