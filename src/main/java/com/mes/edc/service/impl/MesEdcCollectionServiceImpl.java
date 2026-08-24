@@ -28,8 +28,11 @@ import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
 import com.mes.route.entity.MesStep;
 import com.mes.route.mapper.MesStepMapper;
+import com.mes.system.entity.SysUser;
+import com.mes.system.mapper.SysUserMapper;
 import com.mes.track.entity.MesTxLog;
 import com.mes.track.mapper.MesTxLogMapper;
+import cn.hutool.json.JSONUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -64,6 +67,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     public static final String STATUS_PROCESSING = "processing";
     public static final String SPEC_ACTIVE = "active";
     public static final String REASON_EDC_OOS = "EDC_OOS";
+    public static final String TX_EDC_COLLECT = "EDC_COLLECT";
     public static final int ENABLED = 1;
     public static final int MANDATORY = 1;
 
@@ -76,11 +80,13 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     private final MesLotMapper mesLotMapper;
     private final MesTxLogMapper mesTxLogMapper;
     private final MesStepMapper mesStepMapper;
+    private final SysUserMapper sysUserMapper;
     private final HoldService holdService;
 
     @Value("${mes.edc.auto-hold-on-oos:false}")
     private boolean autoHoldOnOos;
 
+    /** 按批次/站/本趟开工/结果翻页，新的排前面。 */
     @Override
     public PageResult<MesEdcCollectionVO> page(MesEdcCollectionQuery query) {
         long pageNo = query.getPage() <= 0 ? 1 : query.getPage();
@@ -111,6 +117,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return PageResult.of(records, result.getTotal(), pageNo, pageSize);
     }
 
+    /** 单条采集详情，带点值。 */
     @Override
     public MesEdcCollectionVO get(Long id) {
         MesEdcCollection row = mesEdcCollectionMapper.selectById(id);
@@ -118,6 +125,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return toDetailVo(row);
     }
 
+    /** 这趟开工最新一条采集；门禁认它，不管以前合格不合格。 */
     @Override
     public MesEdcCollectionVO getLatest(Long lotId, Long trackInTxId) {
         AssertUtil.notNull(lotId, "批次不能为空");
@@ -133,6 +141,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return toDetailVo(row);
     }
 
+    /** 手录提交：对照规格判 OOS，写履历；超规且开关开着再锁批。同趟可重采。 */
     @Override
     @Transactional(rollbackFor = Exception.class)
     public MesEdcCollectionVO submit(MesEdcCollectionCreateDTO dto) {
@@ -244,6 +253,8 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
             mesEdcCollectionItemMapper.insert(row);
         }
 
+        writeCollectTx(lot, head, userId);
+
         if (anyOos) {
             holdOnOos(lot, head);
         }
@@ -251,6 +262,34 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return toDetailVo(head);
     }
 
+    /** 记一笔量测履历。不改批次状态，只让调查台能看到这次采了啥、合不合格。 */
+    private void writeCollectTx(MesLot lot, MesEdcCollection head, long userId) {
+        SysUser user = sysUserMapper.selectById(userId);
+        Map<String, Object> ext = new HashMap<>();
+        ext.put("collectionId", head.getId());
+        ext.put("result", head.getResult());
+        ext.put("trackInTxId", head.getTrackInTxId());
+
+        MesTxLog log = new MesTxLog();
+        log.setLotId(lot.getId());
+        log.setLotNo(lot.getLotNo());
+        log.setTxType(TX_EDC_COLLECT);
+        log.setFromStatus(lot.getStatus());
+        log.setToStatus(lot.getStatus());
+        log.setFromSortNo(head.getSortNo());
+        log.setToSortNo(head.getSortNo());
+        log.setStepId(head.getStepId());
+        log.setEqpId(head.getEqpId());
+        log.setRouteVersionId(head.getRouteVersionId());
+        log.setRemark(RESULT_PASS.equals(head.getResult()) ? "量测合格" : "量测不合格");
+        log.setExtJson(JSONUtil.toJsonStr(ext));
+        log.setOperUserId(userId);
+        log.setOperUserName(user != null ? user.getUserName() : null);
+        log.setCreateTime(head.getCollectedAt() != null ? head.getCollectedAt() : LocalDateTime.now());
+        mesTxLogMapper.insert(log);
+    }
+
+    /** 超规才锁；没开开关或已经锁着就放过。缺必采不算超规，不在这儿挂。 */
     private void holdOnOos(MesLot lot, MesEdcCollection head) {
         if (!autoHoldOnOos || holdService.hasActive(lot.getId())) {
             return;
@@ -295,6 +334,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return usl != null && value.compareTo(usl) > 0;
     }
 
+    /** 空串当没填。 */
     private static String blankToNull(String v) {
         if (!StringUtils.hasText(v)) {
             return null;
@@ -302,6 +342,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return v.trim();
     }
 
+    /** 把头和点值拼成详情。 */
     private MesEdcCollectionVO toDetailVo(MesEdcCollection row) {
         List<MesEdcCollectionItem> items = mesEdcCollectionItemMapper.selectList(
                 new LambdaQueryWrapper<MesEdcCollectionItem>()
@@ -311,6 +352,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return toVo(row, step, items.size(), toItemVos(items));
     }
 
+    /** 点值带上特性名、单位、规格版本；一次查出，不在循环里打库。 */
     private List<MesEdcCollectionItemVO> toItemVos(List<MesEdcCollectionItem> items) {
         if (items.isEmpty()) {
             return List.of();
@@ -350,6 +392,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return list;
     }
 
+    /** 列表页只要点数，不拉明细。 */
     private Map<Long, Integer> loadItemCountMap(List<MesEdcCollection> rows) {
         if (rows.isEmpty()) {
             return Map.of();
@@ -366,6 +409,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
         return map;
     }
 
+    /** 列表上的站名，批量查工序。 */
     private Map<Long, MesStep> loadStepMap(List<MesEdcCollection> rows) {
         if (rows.isEmpty()) {
             return Map.of();
@@ -378,6 +422,7 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
                 .collect(Collectors.toMap(MesStep::getId, s -> s, (a, b) -> a, HashMap::new));
     }
 
+    /** 采集头转对外对象；items 可空，列表页不带点。 */
     private static MesEdcCollectionVO toVo(MesEdcCollection row, MesStep step, int itemCount,
                                            List<MesEdcCollectionItemVO> items) {
         MesEdcCollectionVO vo = new MesEdcCollectionVO();
