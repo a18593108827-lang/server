@@ -55,3 +55,6 @@ mes:
     gate-enabled: true
     # OOS 采集后自动锁批；缺必采不挂
     auto-hold-on-oos: true
+  spc:
+    # false=关掉判异；图还在，采集不受影响
+    enabled: true

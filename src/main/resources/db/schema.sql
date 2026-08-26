@@ -185,6 +185,8 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (254, 253, 3, 'edc:edit',        '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (255, 253, 3, 'edc:publish',     '????', NULL,              NULL,               2,  1, NOW(), NOW(), 0),
 (256, 253, 3, 'edc:collect',     '????', NULL,              NULL,               3,  1, NOW(), NOW(), 0),
+(257, 200, 2, 'spc:view',        '趋势',     '/app/spc',        'activity',         165,1, NOW(), NOW(), 0),
+(258, 257, 3, 'spc:edit',        '趋势编辑', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (260, 200, 2, 'hold:list',       '??',     '/app/hold',       'pause-circle',     16, 1, NOW(), NOW(), 0),
 (261, 260, 3, 'hold:create',     '????', NULL,              NULL,               1,  1, NOW(), NOW(), 0),
 (262, 260, 3, 'hold:release',    '??',     NULL,              NULL,               2,  1, NOW(), NOW(), 0),
@@ -302,7 +304,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1138, 1, 253, NOW()),
 (1139, 1, 254, NOW()),
 (1140, 1, 255, NOW()),
-(1141, 1, 256, NOW())
+(1141, 1, 256, NOW()),
+(1142, 1, 257, NOW()),
+(1143, 1, 258, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor????? + ????
@@ -333,7 +337,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1419, 4, 301, NOW()),
 (1420, 4, 302, NOW()),
 (1421, 4, 294, NOW()),
-(1422, 4, 253, NOW())
+(1422, 4, 253, NOW()),
+(1423, 4, 257, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -387,6 +392,8 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1334, 3, 254, NOW()),
 (1335, 3, 255, NOW()),
 (1336, 3, 256, NOW()),
+(1337, 3, 257, NOW()),
+(1338, 3, 258, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -1011,3 +1018,41 @@ CREATE TABLE IF NOT EXISTS mes_edc_collection_item (
     PRIMARY KEY (id),
     KEY idx_edc_col_item (collection_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc collection item';
+
+CREATE TABLE IF NOT EXISTS mes_spc_chart (
+    id            BIGINT         NOT NULL COMMENT 'PK',
+    param_id      BIGINT         NOT NULL COMMENT 'param id',
+    step_id       BIGINT         NOT NULL COMMENT 'step id',
+    eqp_id        BIGINT         NOT NULL DEFAULT 0 COMMENT 'eqp; 0=all eqp at step',
+    chart_type    VARCHAR(16)    NOT NULL DEFAULT 'IMR' COMMENT 'IMR',
+    limit_mode    VARCHAR(16)    NOT NULL COMMENT 'MANUAL/LEARNING',
+    learning_n    INT            NOT NULL DEFAULT 25 COMMENT 'learning sample n',
+    ucl           DECIMAL(20,8)           COMMENT 'ucl',
+    cl            DECIMAL(20,8)           COMMENT 'cl',
+    lcl           DECIMAL(20,8)           COMMENT 'lcl',
+    run_n         INT            NOT NULL DEFAULT 7 COMMENT 'run rule n; 0=off',
+    enabled       TINYINT        NOT NULL DEFAULT 1 COMMENT '1 enabled',
+    version       INT            NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
+    create_by     BIGINT                  COMMENT 'create by',
+    update_by     BIGINT                  COMMENT 'update by',
+    create_time   DATETIME                COMMENT 'create time',
+    update_time   DATETIME                COMMENT 'update time',
+    deleted       TINYINT        NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_spc_chart_ctx (param_id, step_id, eqp_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='spc chart';
+
+CREATE TABLE IF NOT EXISTS mes_spc_eval (
+    id                   BIGINT         NOT NULL COMMENT 'PK',
+    chart_id             BIGINT         NOT NULL COMMENT 'chart id',
+    collection_item_id   BIGINT         NOT NULL COMMENT 'edc item id',
+    ooc                  TINYINT        NOT NULL COMMENT '0/1',
+    rule_code            VARCHAR(16)    NOT NULL COMMENT 'WE1/RUN',
+    ucl_snap             DECIMAL(20,8)           COMMENT 'ucl snap',
+    cl_snap              DECIMAL(20,8)           COMMENT 'cl snap',
+    lcl_snap             DECIMAL(20,8)           COMMENT 'lcl snap',
+    create_time          DATETIME                COMMENT 'create time',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_spc_eval_item (chart_id, collection_item_id),
+    KEY idx_spc_eval_chart_time (chart_id, create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='spc eval';
