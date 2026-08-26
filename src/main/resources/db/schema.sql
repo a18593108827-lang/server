@@ -993,7 +993,8 @@ CREATE TABLE IF NOT EXISTS mes_edc_collection (
     deleted            TINYINT      NOT NULL DEFAULT 0 COMMENT 'soft delete',
     PRIMARY KEY (id),
     KEY idx_edc_col_visit (lot_id, track_in_tx_id, collected_at),
-    KEY idx_edc_col_lot_step (lot_id, step_id, collected_at)
+    KEY idx_edc_col_lot_step (lot_id, step_id, collected_at),
+    KEY idx_edc_col_step_time (step_id, collected_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='edc collection';
 
 CREATE TABLE IF NOT EXISTS mes_edc_collection_item (

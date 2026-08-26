@@ -13,6 +13,7 @@ import com.mes.edc.entity.MesEdcParam;
 import com.mes.edc.entity.MesEdcPlan;
 import com.mes.edc.entity.MesEdcPlanItem;
 import com.mes.edc.entity.MesEdcSpec;
+import com.mes.edc.event.EdcCollectedEvent;
 import com.mes.edc.mapper.MesEdcCollectionItemMapper;
 import com.mes.edc.mapper.MesEdcCollectionMapper;
 import com.mes.edc.mapper.MesEdcParamMapper;
@@ -20,8 +21,11 @@ import com.mes.edc.mapper.MesEdcPlanItemMapper;
 import com.mes.edc.mapper.MesEdcPlanMapper;
 import com.mes.edc.mapper.MesEdcSpecMapper;
 import com.mes.edc.service.MesEdcCollectionService;
+import com.mes.edc.vo.EdcSeriesPoint;
 import com.mes.edc.vo.MesEdcCollectionItemVO;
 import com.mes.edc.vo.MesEdcCollectionVO;
+import com.mes.equipment.entity.MesEqp;
+import com.mes.equipment.mapper.MesEqpMapper;
 import com.mes.hold.dto.MesHoldCreateDTO;
 import com.mes.hold.service.HoldService;
 import com.mes.lot.entity.MesLot;
@@ -35,6 +39,7 @@ import com.mes.track.mapper.MesTxLogMapper;
 import cn.hutool.json.JSONUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -70,6 +75,8 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     public static final String TX_EDC_COLLECT = "EDC_COLLECT";
     public static final int ENABLED = 1;
     public static final int MANDATORY = 1;
+    public static final int SERIES_LIMIT_DEFAULT = 100;
+    public static final int SERIES_LIMIT_MAX = 500;
 
     private final MesEdcCollectionMapper mesEdcCollectionMapper;
     private final MesEdcCollectionItemMapper mesEdcCollectionItemMapper;
@@ -80,8 +87,10 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     private final MesLotMapper mesLotMapper;
     private final MesTxLogMapper mesTxLogMapper;
     private final MesStepMapper mesStepMapper;
+    private final MesEqpMapper mesEqpMapper;
     private final SysUserMapper sysUserMapper;
     private final HoldService holdService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${mes.edc.auto-hold-on-oos:false}")
     private boolean autoHoldOnOos;
@@ -120,9 +129,33 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
     /** 单条采集详情，带点值。 */
     @Override
     public MesEdcCollectionVO get(Long id) {
+        MesEdcCollectionVO vo = find(id);
+        AssertUtil.notNull(vo, "采集不存在");
+        return vo;
+    }
+
+    /** 按 id 找采集详情。没有或 id 空就返回空，不喊「不存在」。监听走这条，页面详情走 get。 */
+    @Override
+    public MesEdcCollectionVO find(Long id) {
+        if (id == null) {
+            return null;
+        }
         MesEdcCollection row = mesEdcCollectionMapper.selectById(id);
-        AssertUtil.notNull(row, "采集不存在");
+        if (row == null) {
+            return null;
+        }
         return toDetailVo(row);
+    }
+
+    /** 按特性+站点取时间线上的点，OOS 也要。没传特性或站点就空列表。条数空按 100，封顶 500。 */
+    @Override
+    public List<EdcSeriesPoint> listSeries(Long paramId, Long stepId, Long eqpId,
+                                           LocalDateTime from, LocalDateTime to, Integer limit) {
+        if (paramId == null || stepId == null) {
+            return List.of();
+        }
+        int n = (limit == null || limit < 1) ? SERIES_LIMIT_DEFAULT : Math.min(limit, SERIES_LIMIT_MAX);
+        return mesEdcCollectionMapper.listSeries(paramId, stepId, eqpId, from, to, n);
     }
 
     /** 这趟开工最新一条采集；门禁认它，不管以前合格不合格。 */
@@ -259,7 +292,31 @@ public class MesEdcCollectionServiceImpl implements MesEdcCollectionService {
             holdOnOos(lot, head);
         }
 
+        publishCollected(head);
         return toDetailVo(head);
+    }
+
+    /** 采完喊一声给 SPC。这里不判异；没人听也没事，别把采集搞失败。站码机台码一起带上。 */
+    private void publishCollected(MesEdcCollection head) {
+        String stepCode = null;
+        if (head.getStepId() != null) {
+            MesStep step = mesStepMapper.selectById(head.getStepId());
+            stepCode = step != null ? step.getStepCode() : null;
+        }
+        String eqpCode = null;
+        if (head.getEqpId() != null) {
+            MesEqp eqp = mesEqpMapper.selectById(head.getEqpId());
+            eqpCode = eqp != null ? eqp.getEqpCode() : null;
+        }
+        eventPublisher.publishEvent(new EdcCollectedEvent(
+                head.getId(),
+                head.getLotId(),
+                head.getLotNo(),
+                head.getStepId(),
+                stepCode,
+                head.getEqpId(),
+                eqpCode,
+                head.getCollectedAt()));
     }
 
     /** 记一笔量测履历。不改批次状态，只让调查台能看到这次采了啥、合不合格。 */
