@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
   <component name="SqlDialectMappings">
+    <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_alarm.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_branch.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_dispatch.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_dispatch_reserve_slot.sql" dialect="MySQL" />
@@ -18,6 +19,7 @@
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_lot_split.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_off_flow.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_off_flow_count.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_ops_menu.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_process_time.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_qtime.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_recipe.sql" dialect="MySQL" />
