@@ -7,6 +7,7 @@ import com.mes.alarm.entity.MesAlarmCode;
 import com.mes.alarm.mapper.MesAlarmCodeMapper;
 import com.mes.alarm.mapper.MesAlarmMapper;
 import com.mes.alarm.service.AlarmService;
+import com.mes.alarm.ws.AlarmWsPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -37,6 +38,7 @@ public class AlarmServiceImpl implements AlarmService {
 
     private final MesAlarmMapper mesAlarmMapper;
     private final MesAlarmCodeMapper mesAlarmCodeMapper;
+    private final AlarmWsPublisher alarmWsPublisher;
 
     @Value("${mes.alarm.enabled:true}")
     private boolean enabled;
@@ -56,6 +58,7 @@ public class AlarmServiceImpl implements AlarmService {
 
     /**
      * 真正落库：关阀就退；有未关的同键 OPEN 就累加次数，否则新建一条。
+     * 写成功后登记 WS，等事务提交再推。
      */
     private void doRaise(String code, String message, Map<String, Object> payload) {
         if (!enabled) {
@@ -94,6 +97,7 @@ public class AlarmServiceImpl implements AlarmService {
             mesAlarmMapper.updateById(open);
             log.warn("[ALARM] bump code={} id={} count={} message={} payload={}",
                     alarmCode, open.getId(), open.getRaiseCount(), message, payload);
+            alarmWsPublisher.publishAfterCommit(AlarmWsPublisher.ACTION_BUMP, open);
             return;
         }
 
@@ -112,6 +116,7 @@ public class AlarmServiceImpl implements AlarmService {
         mesAlarmMapper.insert(row);
         log.warn("[ALARM] open code={} id={} entity={}/{} message={} payload={}",
                 alarmCode, row.getId(), entity.type, entity.id, message, payload);
+        alarmWsPublisher.publishAfterCommit(AlarmWsPublisher.ACTION_OPEN, row);
     }
 
     /**

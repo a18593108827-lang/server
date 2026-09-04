@@ -8,6 +8,7 @@ import com.mes.alarm.entity.MesAlarm;
 import com.mes.alarm.facade.AlarmFacade;
 import com.mes.alarm.mapper.MesAlarmMapper;
 import com.mes.alarm.vo.AlarmVO;
+import com.mes.alarm.ws.AlarmWsPublisher;
 import com.mes.common.AssertUtil;
 import com.mes.common.BusinessException;
 import com.mes.common.PageResult;
@@ -31,6 +32,7 @@ public class AlarmFacadeImpl implements AlarmFacade {
     private static final int CRITICAL_LIMIT = 50;
 
     private final MesAlarmMapper mesAlarmMapper;
+    private final AlarmWsPublisher alarmWsPublisher;
 
     /**
      * 分页查告警；可按状态、级别、码、最近响的时间筛；按最近响的时间倒序。
@@ -87,6 +89,7 @@ public class AlarmFacadeImpl implements AlarmFacade {
         row.setAckAt(LocalDateTime.now());
         row.setAckRemark(trimRemark(remark));
         mesAlarmMapper.updateById(row);
+        alarmWsPublisher.publishAfterCommit(AlarmWsPublisher.ACTION_ACK, row);
         return toVo(row);
     }
 
@@ -109,6 +112,7 @@ public class AlarmFacadeImpl implements AlarmFacade {
         row.setClearAt(LocalDateTime.now());
         row.setClearRemark(trimRemark(remark));
         mesAlarmMapper.updateById(row);
+        alarmWsPublisher.publishAfterCommit(AlarmWsPublisher.ACTION_CLEARED, row);
         return toVo(row);
     }
 
