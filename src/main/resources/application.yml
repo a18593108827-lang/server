@@ -58,3 +58,6 @@ mes:
   spc:
     # false=关掉判异；图还在，采集不受影响
     enabled: true
+  alarm:
+    # false=raise 空操作；查询仍可读历史
+    enabled: true
