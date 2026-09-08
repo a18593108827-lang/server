@@ -56,6 +56,16 @@ public class HoldServiceImpl implements HoldService {
     private final SysUserMapper sysUserMapper;
     private final WipProjectionService wipProjectionService;
 
+    /**
+     * 看板等只要个数：active Hold 的 COUNT(*)，不分页、不拼 VO。
+     */
+    @Override
+    public long countActive() {
+        Long n = mesHoldMapper.selectCount(new LambdaQueryWrapper<MesHold>()
+                .eq(MesHold::getStatus, STATUS_ACTIVE));
+        return n == null ? 0L : n;
+    }
+
     @Override
     public PageResult<MesHoldVO> page(MesHoldQuery query) {
         long pageNo = query.getPage() <= 0 ? 1 : query.getPage();

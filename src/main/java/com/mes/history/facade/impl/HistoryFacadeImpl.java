@@ -10,6 +10,7 @@ import com.mes.history.dto.HistoryQuery;
 import com.mes.history.facade.HistoryFacade;
 import com.mes.history.mapper.HistoryTxLogMapper;
 import com.mes.history.support.HistoryTxAssembler;
+import com.mes.history.vo.HistoryDailyCountVO;
 import com.mes.history.vo.HistoryTxVO;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
@@ -18,6 +19,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 
@@ -109,5 +112,23 @@ public class HistoryFacadeImpl implements HistoryFacade {
             throw new BusinessException(ResultCode.NOT_FOUND, "履历不存在");
         }
         return historyTxAssembler.toVoList(List.of(row)).get(0);
+    }
+
+    /**
+     * 统计某事务类型每日数量
+     */
+    @Override
+    public List<HistoryDailyCountVO> countDailyByTxType(String txType, LocalDate from, LocalDate toInclusive) {
+        if (!StringUtils.hasText(txType) || from == null || toInclusive == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "txType / from / to 不能为空");
+        }
+        if (toInclusive.isBefore(from)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "to 不能早于 from");
+        }
+        LocalDateTime start = from.atStartOfDay();
+        LocalDateTime endExclusive = toInclusive.plusDays(1).atStartOfDay();
+        List<HistoryDailyCountVO> rows = historyTxLogMapper.countDailyByTxType(
+                txType.trim(), start, endExclusive);
+        return rows == null ? Collections.emptyList() : rows;
     }
 }

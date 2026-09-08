@@ -2,8 +2,10 @@ package com.mes.history.facade;
 
 import com.mes.common.PageResult;
 import com.mes.history.dto.HistoryQuery;
+import com.mes.history.vo.HistoryDailyCountVO;
 import com.mes.history.vo.HistoryTxVO;
 
+import java.time.LocalDate;
 import java.util.List;
 
 /**
@@ -20,4 +22,9 @@ public interface HistoryFacade {
 
     /** 抽屉单行；没有就 404 */
     HistoryTxVO getByTxId(Long txId);
+
+    /**
+     * 统计某事务类型每日数量
+     */
+    List<HistoryDailyCountVO> countDailyByTxType(String txType, LocalDate from, LocalDate toInclusive);
 }

@@ -14,6 +14,11 @@ public interface HoldService {
     /** 分页；默认查 active */
     PageResult<MesHoldVO> page(MesHoldQuery query);
 
+    /**
+     * 活跃锁批条数：与 page 默认口径一致（status=active），只 COUNT，不组装列表。
+     */
+    long countActive();
+
     MesHoldVO get(Long id);
 
     /** 某批 Hold 历史（含已解锁） */

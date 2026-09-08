@@ -26,4 +26,10 @@ public interface AlarmFacade {
 
     /** 顶栏：未关闭的严重告警（OPEN/ACK + CRITICAL） */
     List<AlarmVO> listActiveCritical();
+
+    /** 未关闭数：OPEN + ACK（看板 KPI） */
+    long countUncleared();
+
+    /** 最近未关闭，按 lastRaiseAt 倒序（看板报警流） */
+    List<AlarmVO> listUncleared(int limit);
 }

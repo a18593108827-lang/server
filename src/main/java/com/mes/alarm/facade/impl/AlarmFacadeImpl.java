@@ -130,6 +130,32 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return rows.stream().map(this::toVo).collect(Collectors.toList());
     }
 
+    /**
+     * 看板 KPI：还没关掉的告警条数（OPEN + ACK）。
+     * CLEARED 不算；和 listUncleared 同一口径。
+     */
+    @Override
+    public long countUncleared() {
+        Long n = mesAlarmMapper.selectCount(new LambdaQueryWrapper<MesAlarm>()
+                .in(MesAlarm::getStatus, MesAlarm.STATUS_OPEN, MesAlarm.STATUS_ACK));
+        return n == null ? 0L : n;
+    }
+
+    /**
+     * 看板报警流列表：未关闭（OPEN/ACK），按最近响的时间倒序。
+     * limit范围1～200；不改状态，ACK/CLEAR 仍走上面的写方法。
+     */
+    @Override
+    public List<AlarmVO> listUncleared(int limit) {
+        int lim = limit < 1 ? 20 : Math.min(limit, 200);
+        List<MesAlarm> rows = mesAlarmMapper.selectList(new LambdaQueryWrapper<MesAlarm>()
+                .in(MesAlarm::getStatus, MesAlarm.STATUS_OPEN, MesAlarm.STATUS_ACK)
+                .orderByDesc(MesAlarm::getLastRaiseAt)
+                .orderByDesc(MesAlarm::getId)
+                .last("LIMIT " + lim));
+        return rows.stream().map(this::toVo).collect(Collectors.toList());
+    }
+
     /** 按 id 取行；id 空或不存在直接抛业务异常 */
     private MesAlarm require(Long id) {
         AssertUtil.notNull(id, "告警 id 不能为空");
