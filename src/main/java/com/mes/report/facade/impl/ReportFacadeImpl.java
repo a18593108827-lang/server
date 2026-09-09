@@ -2,10 +2,14 @@ package com.mes.report.facade.impl;
 
 import com.mes.history.facade.HistoryFacade;
 import com.mes.history.vo.HistoryDailyCountVO;
+import com.mes.history.vo.HistoryStepCountVO;
 import com.mes.report.facade.ReportFacade;
 import com.mes.report.support.ReportDateWindow;
 import com.mes.report.vo.ReportDayPointVO;
 import com.mes.report.vo.ReportMoveVO;
+import com.mes.report.vo.ReportStepPointVO;
+import com.mes.route.entity.MesStep;
+import com.mes.route.mapper.MesStepMapper;
 import com.mes.track.service.impl.TrackServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,19 +20,24 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Move 报表编排：只问 {@link HistoryFacade}，不直查 mes_tx_log。
- * 无实例可变字段；每次请求局部 Map/List，天然并发安全。
+ * 工序显示名只读 {@link MesStepMapper}。无实例可变字段，请求内局部集合，并发安全。
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ReportFacadeImpl implements ReportFacade {
 
+    private static final String UNATTRIBUTED_NAME = "未归属";
+
     private final HistoryFacade historyFacade;
+    private final MesStepMapper mesStepMapper;
 
     @Override
     public ReportMoveVO moveSummary(LocalDate from, LocalDate to) {
@@ -38,10 +47,9 @@ public class ReportFacadeImpl implements ReportFacade {
         vo.setGeneratedAt(LocalDateTime.now());
         vo.setFrom(window.from());
         vo.setTo(window.to());
-        // Rep-1：按站后置；保持非 null 空列表，避免前端 NPE
-        vo.setByStep(Collections.emptyList());
 
         fillByDay(vo, window);
+        fillByStep(vo, window);
         return vo;
     }
 
@@ -74,7 +82,71 @@ public class ReportFacadeImpl implements ReportFacade {
         }
     }
 
-    /** 获取日期 对应 TRACK_OUT 次数 */
+    /**
+     * 填按站出站：同一 TRACK_OUT 窗按 step_id 分组；无站归「未归属」。
+     * 失败则 byStep 空列表 + partial，不影响已填好的 byDay。
+     */
+    private void fillByStep(ReportMoveVO vo, ReportDateWindow window) {
+        try {
+            List<HistoryStepCountVO> raw = historyFacade.countByStepAndTxType(
+                    TrackServiceImpl.TX_TRACK_OUT, window.from(), window.to());
+            if (raw == null || raw.isEmpty()) {
+                vo.setByStep(Collections.emptyList());
+                return;
+            }
+            Map<Long, MesStep> stepMap = loadSteps(raw);
+            List<ReportStepPointVO> byStep = new ArrayList<>(raw.size());
+            for (HistoryStepCountVO r : raw) {
+                if (r == null) {
+                    continue;
+                }
+                ReportStepPointVO p = new ReportStepPointVO();
+                Long stepId = r.getStepId();
+                p.setStepId(stepId);
+                p.setTrackOutCount(r.getCount());
+                if (stepId == null) {
+                    p.setStepName(UNATTRIBUTED_NAME);
+                } else {
+                    MesStep step = stepMap.get(stepId);
+                    if (step != null) {
+                        p.setStepCode(step.getStepCode());
+                        p.setStepName(step.getStepName());
+                    }
+                }
+                byStep.add(p);
+            }
+            vo.setByStep(byStep);
+        } catch (Exception e) {
+            fail(vo, "move-by-step", e);
+            vo.setByStep(Collections.emptyList());
+        }
+    }
+
+    /** 根据 stepId 批量读工序主数据 */
+    private Map<Long, MesStep> loadSteps(List<HistoryStepCountVO> raw) {
+        Set<Long> ids = new HashSet<>();
+        for (HistoryStepCountVO r : raw) {
+            if (r != null && r.getStepId() != null) {
+                ids.add(r.getStepId());
+            }
+        }
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<MesStep> steps = mesStepMapper.selectBatchIds(ids);
+        if (steps == null || steps.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<Long, MesStep> map = new HashMap<>(steps.size() * 2);
+        for (MesStep s : steps) {
+            if (s != null && s.getId() != null) {
+                map.put(s.getId(), s);
+            }
+        }
+        return map;
+    }
+
+    /** 获取日期对应 TRACK_OUT 次数 */
     private static Map<String, Long> indexByDay(List<HistoryDailyCountVO> raw) {
         if (raw == null || raw.isEmpty()) {
             return Collections.emptyMap();

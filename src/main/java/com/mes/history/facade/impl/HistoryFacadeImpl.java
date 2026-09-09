@@ -11,6 +11,7 @@ import com.mes.history.facade.HistoryFacade;
 import com.mes.history.mapper.HistoryTxLogMapper;
 import com.mes.history.support.HistoryTxAssembler;
 import com.mes.history.vo.HistoryDailyCountVO;
+import com.mes.history.vo.HistoryStepCountVO;
 import com.mes.history.vo.HistoryTxVO;
 import com.mes.lot.entity.MesLot;
 import com.mes.lot.mapper.MesLotMapper;
@@ -128,6 +129,25 @@ public class HistoryFacadeImpl implements HistoryFacade {
         LocalDateTime start = from.atStartOfDay();
         LocalDateTime endExclusive = toInclusive.plusDays(1).atStartOfDay();
         List<HistoryDailyCountVO> rows = historyTxLogMapper.countDailyByTxType(
+                txType.trim(), start, endExclusive);
+        return rows == null ? Collections.emptyList() : rows;
+    }
+
+    /**
+     * 按工序聚合统计数量；
+     * 便于报表 byDay / byStep 对账。
+     */
+    @Override
+    public List<HistoryStepCountVO> countByStepAndTxType(String txType, LocalDate from, LocalDate toInclusive) {
+        if (!StringUtils.hasText(txType) || from == null || toInclusive == null) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "txType / from / to 不能为空");
+        }
+        if (toInclusive.isBefore(from)) {
+            throw new BusinessException(ResultCode.BAD_REQUEST, "to 不能早于 from");
+        }
+        LocalDateTime start = from.atStartOfDay();
+        LocalDateTime endExclusive = toInclusive.plusDays(1).atStartOfDay();
+        List<HistoryStepCountVO> rows = historyTxLogMapper.countByStepAndTxType(
                 txType.trim(), start, endExclusive);
         return rows == null ? Collections.emptyList() : rows;
     }

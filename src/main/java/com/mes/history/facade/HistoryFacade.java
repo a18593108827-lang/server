@@ -3,6 +3,7 @@ package com.mes.history.facade;
 import com.mes.common.PageResult;
 import com.mes.history.dto.HistoryQuery;
 import com.mes.history.vo.HistoryDailyCountVO;
+import com.mes.history.vo.HistoryStepCountVO;
 import com.mes.history.vo.HistoryTxVO;
 
 import java.time.LocalDate;
@@ -27,4 +28,10 @@ public interface HistoryFacade {
      * 统计某事务类型每日数量
      */
     List<HistoryDailyCountVO> countDailyByTxType(String txType, LocalDate from, LocalDate toInclusive);
+
+    /**
+     * 统计某事务类型按工序分组的数量
+     * step_id 为空归入 stepId=null 桶
+     */
+    List<HistoryStepCountVO> countByStepAndTxType(String txType, LocalDate from, LocalDate toInclusive);
 }
