@@ -8,7 +8,7 @@ import java.time.temporal.ChronoUnit;
 
 /**
  * 报表时间窗解析：无共享可变状态，请求内纯函数。
- * 默认近 7 日（含今天）；跨度超过 {@link #MAX_SPAN_DAYS} → 400。
+ * 默认近 7 日（含今天）；跨度超过 {@link #MAX_SPAN_DAYS} → 400（一期性能护栏）。
  */
 public final class ReportDateWindow {
 
@@ -45,12 +45,12 @@ public final class ReportDateWindow {
         LocalDate end = to != null ? to : LocalDate.now();
         LocalDate start = from != null ? from : end.minusDays(DEFAULT_SPAN_DAYS - 1L);
         if (end.isBefore(start)) {
-            throw new BusinessException(ResultCode.BAD_REQUEST, "to 不能早于 from");
+            throw new BusinessException(ResultCode.BAD_REQUEST, "结束日期不能早于开始日期");
         }
         long span = ChronoUnit.DAYS.between(start, end) + 1;
         if (span > MAX_SPAN_DAYS) {
             throw new BusinessException(ResultCode.BAD_REQUEST,
-                    "查询跨度不能超过 " + MAX_SPAN_DAYS + " 天");
+                    "当前最多查询 " + MAX_SPAN_DAYS + " 天");
         }
         return new ReportDateWindow(start, end);
     }
