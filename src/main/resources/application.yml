@@ -61,3 +61,8 @@ mes:
   alarm:
     # false=raise 空操作；查询仍可读历史
     enabled: true
+  carrier:
+    # false=Facade 写路径拒（应急）
+    enabled: true
+    # true=TrackIn 强制已绑载具；默认 false 不挡存量线
+    track-in-required: false

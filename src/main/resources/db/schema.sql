@@ -210,6 +210,9 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (302, 290, 3, 'track:abort',      '加工中止', NULL,            NULL,              12,  1, NOW(), NOW(), 0),
 (310, 0,   1, NULL,                 '复盘',   NULL,              'bar-chart-2',     50, 1, NOW(), NOW(), 0),
 (311, 310, 2, 'report:view',        '报表',   '/app/report',     'bar-chart-2',     10, 1, NOW(), NOW(), 0),
+(320, 200, 2, 'carrier:view',       '载具',   '/app/carrier',    'box',            155, 1, NOW(), NOW(), 0),
+(321, 320, 3, 'carrier:edit',       '载具编辑', NULL,            NULL,               1, 1, NOW(), NOW(), 0),
+(322, 320, 3, 'carrier:bind',       '载具绑解', NULL,            NULL,               2, 1, NOW(), NOW(), 0),
 -- ????
 (100, 0,   1, 'system',              '????', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
 (110, 100, 2, 'system:user',         '????', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
@@ -315,7 +318,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1144, 1, 271, NOW()),
 (1145, 1, 272, NOW()),
 (1146, 1, 273, NOW()),
-(1147, 1, 311, NOW())
+(1147, 1, 311, NOW()),
+(1148, 1, 320, NOW()),
+(1149, 1, 321, NOW()),
+(1150, 1, 322, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor????? + ????
@@ -352,7 +358,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1423, 4, 257, NOW()),
 (1424, 4, 271, NOW()),
 (1425, 4, 272, NOW()),
-(1427, 4, 311, NOW())
+(1427, 4, 311, NOW()),
+(1428, 4, 320, NOW()),
+(1429, 4, 322, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -369,7 +377,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1207, 2, 294, NOW()),
 (1208, 2, 302, NOW()),
 (1209, 2, 253, NOW()),
-(1210, 2, 256, NOW())
+(1210, 2, 256, NOW()),
+(1211, 2, 320, NOW()),
+(1212, 2, 322, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- process_eng??? + ????
@@ -412,6 +422,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1340, 3, 272, NOW()),
 (1341, 3, 273, NOW()),
 (1342, 3, 311, NOW()),
+(1343, 3, 320, NOW()),
+(1344, 3, 321, NOW()),
+(1345, 3, 322, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -563,6 +576,7 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     current_sort_no   INT                    COMMENT '当前站顺序号',
     current_step_id   BIGINT                 COMMENT '当前工序ID',
     current_eqp_id    BIGINT                 COMMENT '当前设备ID',
+    carrier_id        BIGINT                 COMMENT '当前载具ID',
     rework_counts     VARCHAR(512)           COMMENT '按触发站累计返工次数JSON',
     off_flow          TINYINT       NOT NULL DEFAULT 0 COMMENT '是否在Off-Flow中 0/1',
     off_flow_anchor_sort INT                 COMMENT 'Off-Flow锚点站序',
@@ -591,7 +605,8 @@ CREATE TABLE IF NOT EXISTS mes_lot (
     KEY idx_lot_route (route_id),
     KEY idx_lot_route_ver (route_version_id),
     KEY idx_lot_parent (parent_lot_id),
-    KEY idx_lot_current_step (current_step_id)
+    KEY idx_lot_current_step (current_step_id),
+    KEY idx_lot_carrier (carrier_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='批次';
 
 CREATE TABLE IF NOT EXISTS mes_lot_genealogy (
@@ -1129,3 +1144,39 @@ CREATE TABLE IF NOT EXISTS mes_alarm (
     KEY idx_alarm_status_level_time (status, level, last_raise_at),
     KEY idx_alarm_entity (entity_type, entity_id, last_raise_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='alarm instance';
+
+CREATE TABLE IF NOT EXISTS mes_carrier (
+    id               BIGINT         NOT NULL COMMENT 'PK',
+    carrier_code     VARCHAR(64)    NOT NULL COMMENT 'carrier code',
+    carrier_type     VARCHAR(32)    NOT NULL DEFAULT 'FOUP' COMMENT 'type',
+    capacity         INT            NOT NULL DEFAULT 25 COMMENT 'slot capacity',
+    status           VARCHAR(32)    NOT NULL DEFAULT 'AVAILABLE' COMMENT 'AVAILABLE/IN_USE/QUARANTINE/SCRAPPED',
+    clean_status     VARCHAR(32)             DEFAULT 'UNKNOWN' COMMENT 'CLEAN/DIRTY/UNKNOWN',
+    location_type    VARCHAR(32)             DEFAULT 'NONE' COMMENT 'NONE/STOCKER/PORT/OHB/MANUAL',
+    location_ref     VARCHAR(128)            COMMENT 'location ref',
+    remark           VARCHAR(512)            COMMENT 'remark',
+    version          INT            NOT NULL DEFAULT 0 COMMENT 'optimistic lock',
+    create_by        BIGINT                  COMMENT 'create by',
+    create_time      DATETIME                COMMENT 'create time',
+    update_by        BIGINT                  COMMENT 'update by',
+    update_time      DATETIME                COMMENT 'update time',
+    deleted          TINYINT        NOT NULL DEFAULT 0 COMMENT 'soft delete',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_carrier_code (carrier_code),
+    KEY idx_carrier_status (status),
+    KEY idx_carrier_location (location_type, location_ref)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='carrier master';
+
+CREATE TABLE IF NOT EXISTS mes_carrier_binding (
+    id               BIGINT         NOT NULL COMMENT 'PK',
+    carrier_id       BIGINT         NOT NULL COMMENT 'carrier id',
+    lot_id           BIGINT         NOT NULL COMMENT 'lot id',
+    bind_time        DATETIME       NOT NULL COMMENT 'bind time',
+    bind_by          BIGINT                  COMMENT 'bind by',
+    create_time      DATETIME                COMMENT 'create time',
+    update_time      DATETIME                COMMENT 'update time',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_binding_lot (lot_id),
+    UNIQUE KEY uk_binding_carrier (carrier_id),
+    KEY idx_binding_bind_time (bind_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='carrier current binding';
