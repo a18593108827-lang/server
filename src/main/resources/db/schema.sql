@@ -208,7 +208,8 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (300, 290, 3, 'track:scrap',      '报废',   NULL,              NULL,              10,  1, NOW(), NOW(), 0),
 (301, 290, 3, 'track:bonus',      '数量调整', NULL,            NULL,              11,  1, NOW(), NOW(), 0),
 (302, 290, 3, 'track:abort',      '加工中止', NULL,            NULL,              12,  1, NOW(), NOW(), 0),
-(311, 0,   3, 'report:view',      '报表查看', NULL,            NULL,              90,  1, NOW(), NOW(), 0),
+(310, 0,   1, NULL,                 '复盘',   NULL,              'bar-chart-2',     50, 1, NOW(), NOW(), 0),
+(311, 310, 2, 'report:view',        '报表',   '/app/report',     'bar-chart-2',     10, 1, NOW(), NOW(), 0),
 -- ????
 (100, 0,   1, 'system',              '????', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
 (110, 100, 2, 'system:user',         '????', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
