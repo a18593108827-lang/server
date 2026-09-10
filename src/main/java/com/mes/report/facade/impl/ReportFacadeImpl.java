@@ -1,11 +1,18 @@
 package com.mes.report.facade.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.mes.history.facade.HistoryFacade;
 import com.mes.history.vo.HistoryDailyCountVO;
 import com.mes.history.vo.HistoryStepCountVO;
+import com.mes.hold.entity.MesHoldReason;
+import com.mes.hold.mapper.MesHoldReasonMapper;
+import com.mes.hold.service.HoldService;
+import com.mes.hold.vo.HoldReasonAggVO;
 import com.mes.report.facade.ReportFacade;
 import com.mes.report.support.ReportDateWindow;
 import com.mes.report.vo.ReportDayPointVO;
+import com.mes.report.vo.ReportHoldReasonVO;
+import com.mes.report.vo.ReportHoldVO;
 import com.mes.report.vo.ReportMoveVO;
 import com.mes.report.vo.ReportStepPointVO;
 import com.mes.route.entity.MesStep;
@@ -14,6 +21,7 @@ import com.mes.track.service.impl.TrackServiceImpl;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,8 +34,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Move 报表编排：只问 {@link HistoryFacade}，不直查 mes_tx_log。
- * 工序显示名只读 {@link MesStepMapper}。无实例可变字段，请求内局部集合，并发安全。
+ * Move / Hold 报表编排：Move 只问 {@link HistoryFacade}；Hold 只问 {@link HoldService}。
+ * 工序 / 原因显示名只读主数据 Mapper。无实例可变字段，请求内局部集合，并发安全。
  */
 @Slf4j
 @Service
@@ -38,6 +46,8 @@ public class ReportFacadeImpl implements ReportFacade {
 
     private final HistoryFacade historyFacade;
     private final MesStepMapper mesStepMapper;
+    private final HoldService holdService;
+    private final MesHoldReasonMapper mesHoldReasonMapper;
 
     @Override
     public ReportMoveVO moveSummary(LocalDate from, LocalDate to) {
@@ -50,6 +60,19 @@ public class ReportFacadeImpl implements ReportFacade {
 
         fillByDay(vo, window);
         fillByStep(vo, window);
+        return vo;
+    }
+
+    @Override
+    public ReportHoldVO holdSummary(LocalDate from, LocalDate to) {
+        ReportDateWindow window = ReportDateWindow.resolve(from, to);
+
+        ReportHoldVO vo = new ReportHoldVO();
+        vo.setGeneratedAt(LocalDateTime.now());
+        vo.setFrom(window.from());
+        vo.setTo(window.to());
+
+        fillByReason(vo, window);
         return vo;
     }
 
@@ -76,7 +99,7 @@ public class ReportFacadeImpl implements ReportFacade {
             vo.setByDay(byDay);
             vo.setTotalTrackOut(total);
         } catch (Exception e) {
-            fail(vo, "move-by-day", e);
+            failMove(vo, "move-by-day", e);
             vo.setByDay(zeroDays(window));
             vo.setTotalTrackOut(0L);
         }
@@ -117,8 +140,49 @@ public class ReportFacadeImpl implements ReportFacade {
             }
             vo.setByStep(byStep);
         } catch (Exception e) {
-            fail(vo, "move-by-step", e);
+            failMove(vo, "move-by-step", e);
             vo.setByStep(Collections.emptyList());
+        }
+    }
+
+    /**
+     * 填 Hold 按原因：hold_time 落窗；名从原因码主数据；失败则空列表 + partial。
+     */
+    private void fillByReason(ReportHoldVO vo, ReportDateWindow window) {
+        try {
+            List<HoldReasonAggVO> raw = holdService.summarizeByReason(window.from(), window.to());
+            if (raw == null || raw.isEmpty()) {
+                vo.setByReason(Collections.emptyList());
+                vo.setTotalHold(0L);
+                return;
+            }
+            Map<String, String> nameByCode = loadReasonNames(raw);
+            List<ReportHoldReasonVO> byReason = new ArrayList<>(raw.size());
+            long total = 0L;
+            for (HoldReasonAggVO r : raw) {
+                if (r == null) {
+                    continue;
+                }
+                ReportHoldReasonVO p = new ReportHoldReasonVO();
+                String code = r.getReasonCode();
+                p.setReasonCode(code);
+                if (!StringUtils.hasText(code)) {
+                    p.setReasonName(UNATTRIBUTED_NAME);
+                } else {
+                    p.setReasonName(nameByCode.getOrDefault(code, null));
+                }
+                p.setHoldCount(r.getHoldCount());
+                p.setActiveCount(r.getActiveCount());
+                p.setAvgDurationMinutes(r.getAvgDurationMinutes());
+                byReason.add(p);
+                total += r.getHoldCount();
+            }
+            vo.setByReason(byReason);
+            vo.setTotalHold(total);
+        } catch (Exception e) {
+            failHold(vo, "hold-by-reason", e);
+            vo.setByReason(Collections.emptyList());
+            vo.setTotalHold(0L);
         }
     }
 
@@ -141,6 +205,31 @@ public class ReportFacadeImpl implements ReportFacade {
         for (MesStep s : steps) {
             if (s != null && s.getId() != null) {
                 map.put(s.getId(), s);
+            }
+        }
+        return map;
+    }
+
+    /** 按 reasonCode 批量读原因名 */
+    private Map<String, String> loadReasonNames(List<HoldReasonAggVO> raw) {
+        Set<String> codes = new HashSet<>();
+        for (HoldReasonAggVO r : raw) {
+            if (r != null && StringUtils.hasText(r.getReasonCode())) {
+                codes.add(r.getReasonCode());
+            }
+        }
+        if (codes.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<MesHoldReason> rows = mesHoldReasonMapper.selectList(new LambdaQueryWrapper<MesHoldReason>()
+                .in(MesHoldReason::getReasonCode, codes));
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        Map<String, String> map = new HashMap<>(rows.size() * 2);
+        for (MesHoldReason row : rows) {
+            if (row != null && StringUtils.hasText(row.getReasonCode())) {
+                map.put(row.getReasonCode(), row.getReasonName());
             }
         }
         return map;
@@ -172,10 +261,15 @@ public class ReportFacadeImpl implements ReportFacade {
         return byDay;
     }
 
-    /** 标记 partial、记下错误并打日志；不向上抛，接口仍返回数据 */
-    private void fail(ReportMoveVO vo, String domain, Exception e) {
+    private void failMove(ReportMoveVO vo, String domain, Exception e) {
         vo.setPartial(true);
         vo.getErrors().add(domain + ": " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
         log.warn("report moveSummary partial [{}]", domain, e);
+    }
+
+    private void failHold(ReportHoldVO vo, String domain, Exception e) {
+        vo.setPartial(true);
+        vo.getErrors().add(domain + ": " + (e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName()));
+        log.warn("report holdSummary partial [{}]", domain, e);
     }
 }

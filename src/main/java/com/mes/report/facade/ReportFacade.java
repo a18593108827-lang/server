@@ -1,5 +1,6 @@
 package com.mes.report.facade;
 
+import com.mes.report.vo.ReportHoldVO;
 import com.mes.report.vo.ReportMoveVO;
 
 import java.time.LocalDate;
@@ -17,4 +18,12 @@ public interface ReportFacade {
      * @param to   含；null 则今天
      */
     ReportMoveVO moveSummary(LocalDate from, LocalDate to);
+
+    /**
+     * Hold 原因分布：按 hold_time 落入窗统计。
+     *
+     * @param from 含；null 则按 to 回推默认窗
+     * @param to   含；null 则今天
+     */
+    ReportHoldVO holdSummary(LocalDate from, LocalDate to);
 }
