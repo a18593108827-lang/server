@@ -31,6 +31,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -275,10 +277,15 @@ public class CarrierFacadeImpl implements CarrierFacade {
             throw new BusinessException(ERR_CARRIER_BOUND + ": 载具已绑定其它批次");
         }
 
+        // 允许 AVAILABLE，或「标 IN_USE 但无 binding」的孤儿盒（真占用已在上方 existingCarrierBind 拦截）
         boolean statusOk = MesCarrier.STATUS_AVAILABLE.equals(carrier.getStatus())
-                || (MesCarrier.STATUS_IN_USE.equals(carrier.getStatus())
-                && Objects.equals(lot.getCarrierId(), carrierId));
+                || MesCarrier.STATUS_IN_USE.equals(carrier.getStatus());
         AssertUtil.isTrue(statusOk, ERR_STATUS + ": 仅空闲载具可绑定，当前=" + carrier.getStatus());
+        if (MesCarrier.STATUS_IN_USE.equals(carrier.getStatus())
+                && lot.getCarrierId() != null
+                && !Objects.equals(lot.getCarrierId(), carrierId)) {
+            throw new BusinessException(ERR_LOT_BOUND + ": 批次已指向其它载具，请先解绑");
+        }
 
         long userId = StpUtil.getLoginIdAsLong();
         LocalDateTime now = LocalDateTime.now();
@@ -307,7 +314,7 @@ public class CarrierFacadeImpl implements CarrierFacade {
         AssertUtil.isTrue(carrierRows > 0, ERR_CONCURRENT + ": 载具已被他人修改，请刷新后重试");
 
         writeTxLog(lot, TX_BIND, carrierId, carrier.getCarrierCode(), "绑定载具 " + carrier.getCarrierCode());
-        eventPublisher.publishEvent(new CarrierChangedEvent(
+        publishChangedAfterCommit(new CarrierChangedEvent(
                 CarrierChangedEvent.ACTION_BIND, lotId, lot.getLotNo(), carrierId, carrier.getCarrierCode()));
 
         return toBindingVo(lot, carrier, binding);
@@ -338,23 +345,33 @@ public class CarrierFacadeImpl implements CarrierFacade {
         doUnbindLockedLot(lot);
     }
 
-    /** 根据批次id获取载具id */
+    /** 根据批次id获取载具id（优先 binding，与 lot.carrier_id 对齐） */
     @Override
     public Long getCarrierId(Long lotId) {
         if (lotId == null) {
             return null;
         }
+        MesCarrierBinding binding = bindingMapper.selectOne(new LambdaQueryWrapper<MesCarrierBinding>()
+                .eq(MesCarrierBinding::getLotId, lotId));
+        if (binding != null) {
+            return binding.getCarrierId();
+        }
         MesLot lot = mesLotMapper.selectById(lotId);
         return lot == null ? null : lot.getCarrierId();
     }
 
-    /** 是否已绑 */
+    /** 是否已绑：以 binding 表为准 */
     @Override
     public boolean isBound(Long lotId) {
-        return getCarrierId(lotId) != null;
+        if (lotId == null) {
+            return false;
+        }
+        Long cnt = bindingMapper.selectCount(new LambdaQueryWrapper<MesCarrierBinding>()
+                .eq(MesCarrierBinding::getLotId, lotId));
+        return cnt != null && cnt > 0;
     }
 
-    /** 进站时校验；模块关闭时不挡 */
+    /** 进站时校验；模块关闭时不挡；认 binding */
     @Override
     public void assertBound(Long lotId) {
         if (!carrierEnabled) {
@@ -417,7 +434,7 @@ public class CarrierFacadeImpl implements CarrierFacade {
         return result;
     }
 
-    /** 已锁 Lot 上执行解绑 */
+    /** 已锁 Lot 上执行解绑；顺带修 binding 与 lot.carrier_id 漂移 */
     private void doUnbindLockedLot(MesLot lot) {
         MesCarrierBinding binding = bindingMapper.selectOne(new LambdaQueryWrapper<MesCarrierBinding>()
                 .eq(MesCarrierBinding::getLotId, lot.getId()));
@@ -425,10 +442,20 @@ public class CarrierFacadeImpl implements CarrierFacade {
             return;
         }
 
-        Long carrierId = binding != null ? binding.getCarrierId() : lot.getCarrierId();
-        MesCarrier carrier = null;
-        if (carrierId != null) {
-            carrier = lockCarrier(carrierId);
+        Long bindingCarrierId = binding != null ? binding.getCarrierId() : null;
+        Long lotCarrierId = lot.getCarrierId();
+        // 主释放目标：binding 优先，否则 lot 冗余
+        Long primaryCarrierId = bindingCarrierId != null ? bindingCarrierId : lotCarrierId;
+        // 漂移的另一只盒：也要收回，避免 IN_USE 孤儿
+        Long driftCarrierId = null;
+        if (bindingCarrierId != null && lotCarrierId != null && !Objects.equals(bindingCarrierId, lotCarrierId)) {
+            driftCarrierId = lotCarrierId;
+        }
+
+        MesCarrier carrier = primaryCarrierId != null ? lockCarrier(primaryCarrierId) : null;
+        MesCarrier driftCarrier = null;
+        if (driftCarrierId != null) {
+            driftCarrier = lockCarrier(driftCarrierId);
         }
 
         if (binding != null) {
@@ -444,20 +471,46 @@ public class CarrierFacadeImpl implements CarrierFacade {
                 .setSql("version = version + 1"));
         AssertUtil.isTrue(lotRows > 0, ERR_CONCURRENT + ": 批次已被他人修改，请刷新后重试");
 
-        String carrierCode = carrier != null ? carrier.getCarrierCode() : null;
-        if (carrier != null
-                && !MesCarrier.STATUS_QUARANTINE.equals(carrier.getStatus())
-                && !MesCarrier.STATUS_SCRAPPED.equals(carrier.getStatus())) {
-            carrier.setStatus(MesCarrier.STATUS_AVAILABLE);
-            carrier.setUpdateBy(userId);
-            int carrierRows = carrierMapper.updateById(carrier);
-            AssertUtil.isTrue(carrierRows > 0, ERR_CONCURRENT + ": 载具已被他人修改，请刷新后重试");
-        }
+        markCarrierAvailable(carrier, userId);
+        markCarrierAvailable(driftCarrier, userId);
 
-        writeTxLog(lot, TX_UNBIND, carrierId, carrierCode,
+        String carrierCode = carrier != null ? carrier.getCarrierCode() : null;
+        writeTxLog(lot, TX_UNBIND, primaryCarrierId, carrierCode,
                 "解绑载具" + (carrierCode != null ? " " + carrierCode : ""));
-        eventPublisher.publishEvent(new CarrierChangedEvent(
-                CarrierChangedEvent.ACTION_UNBIND, lot.getId(), lot.getLotNo(), carrierId, carrierCode));
+        publishChangedAfterCommit(new CarrierChangedEvent(
+                CarrierChangedEvent.ACTION_UNBIND, lot.getId(), lot.getLotNo(), primaryCarrierId, carrierCode));
+    }
+
+    /** IN_USE → AVAILABLE（隔离/报废不动） */
+    private void markCarrierAvailable(MesCarrier carrier, long userId) {
+        if (carrier == null) {
+            return;
+        }
+        if (MesCarrier.STATUS_QUARANTINE.equals(carrier.getStatus())
+                || MesCarrier.STATUS_SCRAPPED.equals(carrier.getStatus())) {
+            return;
+        }
+        if (MesCarrier.STATUS_AVAILABLE.equals(carrier.getStatus())) {
+            return;
+        }
+        carrier.setStatus(MesCarrier.STATUS_AVAILABLE);
+        carrier.setUpdateBy(userId);
+        int carrierRows = carrierMapper.updateById(carrier);
+        AssertUtil.isTrue(carrierRows > 0, ERR_CONCURRENT + ": 载具已被他人修改，请刷新后重试");
+    }
+
+    /** 事务提交后再发领域事件，避免监听方读到未提交/回滚数据 */
+    private void publishChangedAfterCommit(CarrierChangedEvent event) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    eventPublisher.publishEvent(event);
+                }
+            });
+        } else {
+            eventPublisher.publishEvent(event);
+        }
     }
 
     /** 获取批次 mysql行锁控制并发安全 */
