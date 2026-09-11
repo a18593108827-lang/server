@@ -19,4 +19,7 @@ public class CarrierVO {
     private Integer version;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
+    /** 当前绑定 Lot；未绑为 null */
+    private Long boundLotId;
+    private String boundLotNo;
 }

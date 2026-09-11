@@ -5,6 +5,8 @@ import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONObject;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.mes.carrier.facade.CarrierFacade;
+import com.mes.carrier.vo.CarrierBindingVO;
 import com.mes.common.AssertUtil;
 import com.mes.common.BusinessException;
 import com.mes.dispatch.service.DispatchService;
@@ -67,6 +69,7 @@ import com.mes.track.vo.TrackTxnResultVO;
 import com.mes.wip.service.WipProjectionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
@@ -169,6 +172,13 @@ public class TrackServiceImpl implements TrackService {
     private final StepEqpTypeGuard stepEqpTypeGuard;
     private final QueueTimeSupport queueTimeSupport;
     private final ProcessTimeSupport processTimeSupport;
+    private final CarrierFacade carrierFacade;
+
+    @Value("${mes.carrier.enabled:true}")
+    private boolean carrierEnabled;
+
+    @Value("${mes.carrier.track-in-required:false}")
+    private boolean carrierTrackInRequired;
 
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -237,6 +247,9 @@ public class TrackServiceImpl implements TrackService {
         holdService.assertNoActive(lotId);
         queueTimeSupport.assertAndSettleOnTrackIn(lot);
         holdService.assertNoActive(lotId);
+        if (carrierTrackInRequired) {
+            carrierFacade.assertBound(lotId);
+        }
         mesEqpService.assertUsable(eqpId);
         dispatchService.assertReserveMatch(lotId, eqpId);// 预约匹配
         dispatchService.assertNotOffFlowAnchored(eqpId, lotId);// Off-Flow 锚点占台
@@ -828,6 +841,10 @@ public class TrackServiceImpl implements TrackService {
         }
         if (eqpId != null) {
             ext.set("eqpId", String.valueOf(eqpId));
+        }
+        Long carrierId = carrierFacade.getCarrierId(lot.getId());
+        if (carrierId != null) {
+            ext.set("carrierId", String.valueOf(carrierId));
         }
         processTimeSupport.putTrackInExt(ext, lot);
         return ext.isEmpty() ? null : ext.toString();
@@ -1501,6 +1518,7 @@ public class TrackServiceImpl implements TrackService {
         vo.setQueueTime(queueTimeSupport.toContextVo(lot));
         vo.setProcessTime(null); // 加工中才有倒计时，下面按当前站补
         vo.setEdc(null);
+        fillCarrierContext(vo, lotId);
 
         if (lot.getRouteVersionId() != null) {
             MesRouteVersion version = mesRouteVersionMapper.selectById(lot.getRouteVersionId());
@@ -1797,6 +1815,19 @@ public class TrackServiceImpl implements TrackService {
         vo.setCompleted(completed);
         vo.setOffFlow(isOffFlow(lot));
         return vo;
+    }
+
+    /** context 载具字段：有绑写码；required 仅开关开时 true */
+    private void fillCarrierContext(TrackContextVO vo, Long lotId) {
+        vo.setCarrierRequired(carrierEnabled && carrierTrackInRequired);
+        CarrierBindingVO binding = carrierFacade.getBinding(lotId);
+        if (binding != null) {
+            vo.setCarrierId(binding.getCarrierId());
+            vo.setCarrierCode(binding.getCarrierCode());
+        } else {
+            vo.setCarrierId(null);
+            vo.setCarrierCode(null);
+        }
     }
 
     /** 是否批次是否在off-flow */

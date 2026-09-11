@@ -206,7 +206,9 @@ public class CarrierFacadeImpl implements CarrierFacade {
     /** 按 id 查载具 */
     @Override
     public CarrierVO get(Long id) {
-        return toVo(require(id));
+        CarrierVO vo = toVo(require(id));
+        fillBoundLots(List.of(vo));
+        return vo;
     }
 
     /** 按编码查载具 */
@@ -216,7 +218,9 @@ public class CarrierFacadeImpl implements CarrierFacade {
         MesCarrier row = carrierMapper.selectOne(new LambdaQueryWrapper<MesCarrier>()
                 .eq(MesCarrier::getCarrierCode, carrierCode.trim()));
         AssertUtil.notNull(row, ERR_NOT_FOUND + ": 载具不存在");
-        return toVo(row);
+        CarrierVO vo = toVo(row);
+        fillBoundLots(List.of(vo));
+        return vo;
     }
 
     /** 分页列表 */
@@ -244,6 +248,7 @@ public class CarrierFacadeImpl implements CarrierFacade {
         for (MesCarrier row : result.getRecords()) {
             records.add(toVo(row));
         }
+        fillBoundLots(records);
         return PageResult.of(records, result.getTotal(), pageNo, pageSize);
     }
 
@@ -652,6 +657,38 @@ public class CarrierFacadeImpl implements CarrierFacade {
         vo.setCreateTime(row.getCreateTime());
         vo.setUpdateTime(row.getUpdateTime());
         return vo;
+    }
+
+    /** 给 VO 补上当前绑的 Lot（id + lotNo），列表一页一次查完 */
+    private void fillBoundLots(List<CarrierVO> records) {
+        if (records == null || records.isEmpty()) {
+            return;
+        }
+        List<Long> carrierIds = records.stream().map(CarrierVO::getId).filter(Objects::nonNull).toList();
+        if (carrierIds.isEmpty()) {
+            return;
+        }
+        List<MesCarrierBinding> bindings = bindingMapper.selectList(new LambdaQueryWrapper<MesCarrierBinding>()
+                .in(MesCarrierBinding::getCarrierId, carrierIds));
+        if (bindings.isEmpty()) {
+            return;
+        }
+        Map<Long, MesCarrierBinding> byCarrier = bindings.stream()
+                .collect(Collectors.toMap(MesCarrierBinding::getCarrierId, b -> b, (a, b) -> a));
+        Set<Long> lotIds = bindings.stream().map(MesCarrierBinding::getLotId).collect(Collectors.toSet());
+        Map<Long, MesLot> lotMap = mesLotMapper.selectBatchIds(lotIds).stream()
+                .collect(Collectors.toMap(MesLot::getId, l -> l, (a, b) -> a));
+        for (CarrierVO vo : records) {
+            MesCarrierBinding binding = byCarrier.get(vo.getId());
+            if (binding == null) {
+                continue;
+            }
+            vo.setBoundLotId(binding.getLotId());
+            MesLot lot = lotMap.get(binding.getLotId());
+            if (lot != null) {
+                vo.setBoundLotNo(lot.getLotNo());
+            }
+        }
     }
 
     /** 绑定转 VO */
