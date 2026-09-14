@@ -61,6 +61,8 @@ mes:
   alarm:
     # false=raise 空操作；查询仍可读历史
     enabled: true
+    # false=忽略码表 HOLD_LOT（风暴止血）；与 enabled 正交
+    hold-on-raise-enabled: true
   carrier:
     # false=Facade 写路径拒（应急）
     enabled: true

@@ -2,6 +2,7 @@
 <project version="4">
   <component name="SqlDialectMappings">
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_alarm.sql" dialect="MySQL" />
+    <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_alarm_p1.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_branch.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_carrier.sql" dialect="MySQL" />
     <file url="file://$PROJECT_DIR$/src/main/resources/db/migrate_dispatch.sql" dialect="MySQL" />

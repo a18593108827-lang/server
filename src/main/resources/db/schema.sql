@@ -754,7 +754,8 @@ INSERT INTO mes_hold_reason (
 (8006, 'OTHER',      '??',         'other',    1, '????',   NOW(), NOW(), 0),
 (8007, 'QTIME_EXCEED', 'Queue Time超时', 'quality', 1, '站间等待超限', NOW(), NOW(), 0),
 (8008, 'PROCESS_TIME_EXCEED', 'Process Time超时', 'quality', 1, '站内加工超上限，出站后锁批', NOW(), NOW(), 0),
-(8009, 'EDC_OOS', '量测超规', 'quality', 1, '采集OOS后锁批，解锁后须重采合格才能完工', NOW(), NOW(), 0)
+(8009, 'EDC_OOS', '量测超规', 'quality', 1, '采集OOS后锁批，解锁后须重采合格才能完工', NOW(), NOW(), 0),
+(8010, 'ALARM_POLICY', '告警策略锁批', 'quality', 1, 'mes_alarm_code.on_raise=HOLD_LOT 时引用', NOW(), NOW(), 0)
 ON DUPLICATE KEY UPDATE
   reason_name = VALUES(reason_name),
   category = VALUES(category),
