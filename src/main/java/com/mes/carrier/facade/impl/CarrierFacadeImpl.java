@@ -406,7 +406,8 @@ public class CarrierFacadeImpl implements CarrierFacade {
         String scanned = scannedCode == null ? "" : scannedCode.trim();
         AssertUtil.isTrue(StringUtils.hasText(scanned), ERR_SCAN_REQUIRED + ": 请扫描载具编码");
         MesCarrier carrier = carrierMapper.selectById(binding.getCarrierId());
-        AssertUtil.notNull(carrier, ERR_REQUIRED + ": 批次未绑定载具");
+        AssertUtil.notNull(carrier,
+                ERR_NOT_FOUND + ": 绑定载具台账缺失(carrierId=" + binding.getCarrierId() + ")，请工程清理脏绑定");
         AssertUtil.isTrue(Objects.equals(scanned, carrier.getCarrierCode()),
                 ERR_MISMATCH + ": 扫码与绑定载具不一致");
     }
