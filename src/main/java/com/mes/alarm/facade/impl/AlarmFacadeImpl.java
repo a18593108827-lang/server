@@ -17,6 +17,7 @@ import com.mes.common.AssertUtil;
 import com.mes.common.BusinessException;
 import com.mes.common.PageResult;
 import com.mes.hold.service.HoldReasonService;
+import com.mes.hold.service.HoldService;
 import com.mes.hold.vo.MesHoldReasonVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -51,6 +52,7 @@ public class AlarmFacadeImpl implements AlarmFacade {
     private final MesAlarmCodeMapper mesAlarmCodeMapper;
     private final AlarmWsPublisher alarmWsPublisher;
     private final HoldReasonService holdReasonService;
+    private final HoldService holdService;
 
     @Override
     public PageResult<AlarmVO> list(AlarmQuery query) {
@@ -81,9 +83,10 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return PageResult.of(records, page.getTotal(), page.getCurrent(), page.getSize());
     }
 
+    /** 单条详情；附码表策略；Lot 时附是否已有生效锁批 */
     @Override
     public AlarmVO get(Long id) {
-        return toVo(require(id));
+        return toDetailVo(require(id));
     }
 
     @Override
@@ -99,7 +102,7 @@ public class AlarmFacadeImpl implements AlarmFacade {
         row.setAckRemark(trimRemark(remark));
         mesAlarmMapper.updateById(row);
         alarmWsPublisher.publishAfterCommit(AlarmWsPublisher.ACTION_ACK, row);
-        return toVo(row);
+        return toDetailVo(row);
     }
 
     @Override
@@ -118,7 +121,7 @@ public class AlarmFacadeImpl implements AlarmFacade {
         row.setClearRemark(trimRemark(remark));
         mesAlarmMapper.updateById(row);
         alarmWsPublisher.publishAfterCommit(AlarmWsPublisher.ACTION_CLEARED, row);
-        return toVo(row);
+        return toDetailVo(row);
     }
 
     @Override
@@ -205,6 +208,36 @@ public class AlarmFacadeImpl implements AlarmFacade {
         List<MesHoldReasonVO> enabled = holdReasonService.listEnabled();
         boolean ok = enabled.stream().anyMatch(r -> reasonCode.equals(r.getReasonCode()));
         AssertUtil.isTrue(ok, "锁批原因码不存在或已停用：" + reasonCode);
+    }
+
+    private AlarmVO toDetailVo(MesAlarm row) {
+        AlarmVO vo = toVo(row);
+        fillCodePolicy(vo, row.getCode());
+        fillLotHoldHint(vo, row);
+        return vo;
+    }
+
+    private void fillCodePolicy(AlarmVO vo, String code) {
+        if (!StringUtils.hasText(code)) {
+            return;
+        }
+        MesAlarmCode def = mesAlarmCodeMapper.selectById(code.trim());
+        if (def == null) {
+            return;
+        }
+        vo.setOnRaise(def.getOnRaise());
+        vo.setHoldReasonCode(def.getHoldReasonCode());
+    }
+
+    /** 只读提示；调 HoldService，不查 hold 表 Mapper */
+    private void fillLotHoldHint(AlarmVO vo, MesAlarm row) {
+        if (!MesAlarm.ENTITY_LOT.equals(row.getEntityType())
+                || row.getEntityId() == null
+                || row.getEntityId() <= 0) {
+            vo.setLotHoldActive(null);
+            return;
+        }
+        vo.setLotHoldActive(holdService.hasActive(row.getEntityId()));
     }
 
     private MesAlarm require(Long id) {
