@@ -64,4 +64,6 @@ public class TrackContextVO {
     private String carrierCode;
     /** TrackIn 是否强制已绑（配置开且模块启用） */
     private Boolean carrierRequired;
+    /** TrackIn 是否强制扫码比对（配置开且模块启用） */
+    private Boolean carrierScanRequired;
 }

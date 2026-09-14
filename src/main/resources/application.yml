@@ -65,6 +65,6 @@ mes:
     # false=Facade 写路径拒（应急）
     enabled: true
     # true=TrackIn 强制已绑载具；默认 false 不挡存量线
-    track-in-required: false
+    track-in-required: true
     # true=TrackIn 强制扫码比对 carrier_code；默认 false 不挡存量线
-    track-in-scan-required: false
+    track-in-scan-required: true
