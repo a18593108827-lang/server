@@ -3,15 +3,21 @@ package com.mes.alarm.facade.impl;
 import cn.dev33.satoken.stp.StpUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.mes.alarm.dto.AlarmCodeUpdateDTO;
 import com.mes.alarm.dto.AlarmQuery;
 import com.mes.alarm.entity.MesAlarm;
+import com.mes.alarm.entity.MesAlarmCode;
 import com.mes.alarm.facade.AlarmFacade;
+import com.mes.alarm.mapper.MesAlarmCodeMapper;
 import com.mes.alarm.mapper.MesAlarmMapper;
+import com.mes.alarm.vo.AlarmCodeVO;
 import com.mes.alarm.vo.AlarmVO;
 import com.mes.alarm.ws.AlarmWsPublisher;
 import com.mes.common.AssertUtil;
 import com.mes.common.BusinessException;
 import com.mes.common.PageResult;
+import com.mes.hold.service.HoldReasonService;
+import com.mes.hold.vo.MesHoldReasonVO;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,25 +25,33 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 告警查询 / 确认 / 关闭。鉴权在 Controller，这里只干业务。
+ * 告警查询 / 确认 / 关闭 / 码表维护。鉴权在 Controller，这里只干业务。
  */
 @Service
 @RequiredArgsConstructor
 public class AlarmFacadeImpl implements AlarmFacade {
 
-    /** 顶栏严重告警最多拉多少条，防一次灌爆 */
     private static final int CRITICAL_LIMIT = 50;
 
-    private final MesAlarmMapper mesAlarmMapper;
-    private final AlarmWsPublisher alarmWsPublisher;
+    private static final String LEVEL_CRITICAL = "CRITICAL";
+    private static final String LEVEL_WARNING = "WARNING";
+    private static final String LEVEL_INFO = "INFO";
+    private static final Set<String> LEVELS = Set.of(LEVEL_CRITICAL, LEVEL_WARNING, LEVEL_INFO);
 
-    /**
-     * 分页查告警；可按状态、级别、码、最近响的时间筛；按最近响的时间倒序。
-     * pageSize 上限 200，避免一次查太猛。
-     */
+    private static final String ON_RAISE_NONE = "NONE";
+    private static final String ON_RAISE_HOLD_LOT = "HOLD_LOT";
+    private static final Set<String> ON_RAISES = Set.of(ON_RAISE_NONE, ON_RAISE_HOLD_LOT);
+
+    private final MesAlarmMapper mesAlarmMapper;
+    private final MesAlarmCodeMapper mesAlarmCodeMapper;
+    private final AlarmWsPublisher alarmWsPublisher;
+    private final HoldReasonService holdReasonService;
+
     @Override
     public PageResult<AlarmVO> list(AlarmQuery query) {
         AlarmQuery q = query != null ? query : new AlarmQuery();
@@ -46,10 +60,10 @@ public class AlarmFacadeImpl implements AlarmFacade {
 
         LambdaQueryWrapper<MesAlarm> w = new LambdaQueryWrapper<>();
         if (StringUtils.hasText(q.getStatus())) {
-            w.eq(MesAlarm::getStatus, q.getStatus().trim().toUpperCase());
+            w.eq(MesAlarm::getStatus, q.getStatus().trim().toUpperCase(Locale.ROOT));
         }
         if (StringUtils.hasText(q.getLevel())) {
-            w.eq(MesAlarm::getLevel, q.getLevel().trim().toUpperCase());
+            w.eq(MesAlarm::getLevel, q.getLevel().trim().toUpperCase(Locale.ROOT));
         }
         if (StringUtils.hasText(q.getCode())) {
             w.eq(MesAlarm::getCode, q.getCode().trim());
@@ -67,16 +81,11 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return PageResult.of(records, page.getTotal(), page.getCurrent(), page.getSize());
     }
 
-    /** 单条详情；没有就抛「告警不存在」 */
     @Override
     public AlarmVO get(Long id) {
         return toVo(require(id));
     }
 
-    /**
-     * 确认：只能 OPEN → ACK；记下是谁、什么时候、备注。
-     * 已确认或已关闭的不能再点确认。
-     */
     @Override
     @Transactional
     public AlarmVO ack(Long id, String remark) {
@@ -93,10 +102,6 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return toVo(row);
     }
 
-    /**
-     * 关闭：OPEN 或 ACK → CLEARED；关完这条生命周期结束。
-     * 已经关过的再关会报错。
-     */
     @Override
     @Transactional
     public AlarmVO clear(Long id, String remark) {
@@ -116,24 +121,16 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return toVo(row);
     }
 
-    /**
-     * 顶栏用：还没关的严重告警（CRITICAL + OPEN/ACK），按最近响的时间倒序。
-     * 一期种子码都是 WARNING，这里多半空列表，接口先占住。
-     */
     @Override
     public List<AlarmVO> listActiveCritical() {
         List<MesAlarm> rows = mesAlarmMapper.selectList(new LambdaQueryWrapper<MesAlarm>()
-                .eq(MesAlarm::getLevel, "CRITICAL")
+                .eq(MesAlarm::getLevel, LEVEL_CRITICAL)
                 .in(MesAlarm::getStatus, MesAlarm.STATUS_OPEN, MesAlarm.STATUS_ACK)
                 .orderByDesc(MesAlarm::getLastRaiseAt)
                 .last("LIMIT " + CRITICAL_LIMIT));
         return rows.stream().map(this::toVo).collect(Collectors.toList());
     }
 
-    /**
-     * 看板 KPI：还没关掉的告警条数（OPEN + ACK）。
-     * CLEARED 不算；和 listUncleared 同一口径。
-     */
     @Override
     public long countUncleared() {
         Long n = mesAlarmMapper.selectCount(new LambdaQueryWrapper<MesAlarm>()
@@ -141,10 +138,6 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return n == null ? 0L : n;
     }
 
-    /**
-     * 看板报警流列表：未关闭（OPEN/ACK），按最近响的时间倒序。
-     * limit范围1～200；不改状态，ACK/CLEAR 仍走上面的写方法。
-     */
     @Override
     public List<AlarmVO> listUncleared(int limit) {
         int lim = limit < 1 ? 20 : Math.min(limit, 200);
@@ -156,7 +149,64 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return rows.stream().map(this::toVo).collect(Collectors.toList());
     }
 
-    /** 按 id 取行；id 空或不存在直接抛业务异常 */
+    @Override
+    public List<AlarmCodeVO> listCodes() {
+        List<MesAlarmCode> rows = mesAlarmCodeMapper.selectList(new LambdaQueryWrapper<MesAlarmCode>()
+                .orderByAsc(MesAlarmCode::getCode));
+        return rows.stream().map(this::toCodeVo).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public AlarmCodeVO updateCode(String code, AlarmCodeUpdateDTO dto) {
+        AssertUtil.isTrue(StringUtils.hasText(code), "告警码不能为空");
+        AssertUtil.notNull(dto, "更新告警实体不能为空");
+
+        MesAlarmCode row = mesAlarmCodeMapper.selectById(code.trim());
+        AssertUtil.notNull(row, "告警码不存在");
+
+        String name = dto.getName() != null ? dto.getName().trim() : "";
+        AssertUtil.isTrue(StringUtils.hasText(name), "名称不能为空");
+
+        AssertUtil.isTrue(StringUtils.hasText(dto.getLevel()), "级别不能为空");
+        String level = dto.getLevel().trim().toUpperCase(Locale.ROOT);
+        AssertUtil.isTrue(LEVELS.contains(level), "级别只能为 CRITICAL / WARNING / INFO");
+
+        AssertUtil.isTrue(StringUtils.hasText(dto.getOnRaise()), "策略不能为空");
+        String onRaise = dto.getOnRaise().trim().toUpperCase(Locale.ROOT);
+        AssertUtil.isTrue(ON_RAISES.contains(onRaise), "策略只能为 NONE / HOLD_LOT");
+
+        Integer enabled = dto.getEnabled();
+        AssertUtil.isTrue(enabled != null && (enabled == 0 || enabled == 1), "启用状态只能为 0 或 1");
+
+        String holdReason = StringUtils.hasText(dto.getHoldReasonCode())
+                ? dto.getHoldReasonCode().trim()
+                : null;
+        if (ON_RAISE_HOLD_LOT.equals(onRaise)) {
+            AssertUtil.isTrue(StringUtils.hasText(holdReason), "HOLD_LOT 须填写锁批原因码");
+            assertHoldReasonEnabled(holdReason);
+        } else {
+            holdReason = null;
+        }
+
+        row.setName(name);
+        row.setLevel(level);
+        row.setOnRaise(onRaise);
+        row.setHoldReasonCode(holdReason);
+        row.setEnabled(enabled);
+        row.setRemark(trimRemark(dto.getRemark()));
+        int n = mesAlarmCodeMapper.updateById(row);
+        AssertUtil.isTrue(n > 0, "更新失败");
+        return toCodeVo(row);
+    }
+
+    /** HOLD_LOT 时：原因码须存在且启用，否则拒保存 */
+    private void assertHoldReasonEnabled(String reasonCode) {
+        List<MesHoldReasonVO> enabled = holdReasonService.listEnabled();
+        boolean ok = enabled.stream().anyMatch(r -> reasonCode.equals(r.getReasonCode()));
+        AssertUtil.isTrue(ok, "锁批原因码不存在或已停用：" + reasonCode);
+    }
+
     private MesAlarm require(Long id) {
         AssertUtil.notNull(id, "告警 id 不能为空");
         MesAlarm row = mesAlarmMapper.selectById(id);
@@ -164,12 +214,10 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return row;
     }
 
-    /** 当前登录人，写确认人 / 关闭人 */
     private long currentUserId() {
         return StpUtil.getLoginIdAsLong();
     }
 
-    /** 备注去空白；空串当没写 */
     private static String trimRemark(String remark) {
         if (!StringUtils.hasText(remark)) {
             return null;
@@ -178,7 +226,6 @@ public class AlarmFacadeImpl implements AlarmFacade {
         return s.isEmpty() ? null : s;
     }
 
-    /** 实体转给前端的 VO，字段原样搬 */
     private AlarmVO toVo(MesAlarm row) {
         AlarmVO vo = new AlarmVO();
         vo.setId(row.getId());
@@ -199,6 +246,18 @@ public class AlarmFacadeImpl implements AlarmFacade {
         vo.setClearBy(row.getClearBy());
         vo.setClearAt(row.getClearAt());
         vo.setClearRemark(row.getClearRemark());
+        return vo;
+    }
+
+    private AlarmCodeVO toCodeVo(MesAlarmCode row) {
+        AlarmCodeVO vo = new AlarmCodeVO();
+        vo.setCode(row.getCode());
+        vo.setName(row.getName());
+        vo.setLevel(row.getLevel());
+        vo.setOnRaise(row.getOnRaise());
+        vo.setHoldReasonCode(row.getHoldReasonCode());
+        vo.setEnabled(row.getEnabled());
+        vo.setRemark(row.getRemark());
         return vo;
     }
 }

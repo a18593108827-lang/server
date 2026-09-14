@@ -1,13 +1,15 @@
 package com.mes.alarm.facade;
 
-import com.mes.common.PageResult;
+import com.mes.alarm.dto.AlarmCodeUpdateDTO;
 import com.mes.alarm.dto.AlarmQuery;
+import com.mes.alarm.vo.AlarmCodeVO;
 import com.mes.alarm.vo.AlarmVO;
+import com.mes.common.PageResult;
 
 import java.util.List;
 
 /**
- * 告警查询与人工处置（确认 / 关闭）。
+ * 告警查询与人工处置（确认 / 关闭）；码表维护。
  * raise 仍走 AlarmService；本门面不鉴权，鉴权在 Controller。
  */
 public interface AlarmFacade {
@@ -32,4 +34,10 @@ public interface AlarmFacade {
 
     /** 最近未关闭，按 lastRaiseAt 倒序（看板报警流） */
     List<AlarmVO> listUncleared(int limit);
+
+    /** 告警码表全量（含停用） */
+    List<AlarmCodeVO> listCodes();
+
+    /** 更新码表行；不改 code 主键 */
+    AlarmCodeVO updateCode(String code, AlarmCodeUpdateDTO dto);
 }
