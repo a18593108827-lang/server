@@ -45,6 +45,12 @@ public interface CarrierFacade {
     /** 进站时校验；模块关闭时不挡 */
     void assertBound(Long lotId);
 
+    /**
+     * TrackIn 扫码比对；模块关或扫码闸关时不挡。
+     * 未绑 → CARRIER_REQUIRED；空扫 → CARRIER_SCAN_REQUIRED；错码 → CARRIER_MISMATCH。
+     */
+    void assertMatch(Long lotId, String scannedCode);
+
     /** 查当前绑定详情 */
     CarrierBindingVO getBinding(Long lotId);
 

@@ -67,6 +67,10 @@ public class CarrierFacadeImpl implements CarrierFacade {
     public static final String ERR_LOT_BOUND = "LOT_ALREADY_BOUND";
     /** TrackIn 闸：未绑 */
     public static final String ERR_REQUIRED = "CARRIER_REQUIRED";
+    /** TrackIn 扫码闸：未提供有效扫码 */
+    public static final String ERR_SCAN_REQUIRED = "CARRIER_SCAN_REQUIRED";
+    /** TrackIn 扫码闸：与绑定不一致 */
+    public static final String ERR_MISMATCH = "CARRIER_MISMATCH";
 
     public static final String TX_BIND = "CARRIER_BIND";
     public static final String TX_UNBIND = "CARRIER_UNBIND";
@@ -96,6 +100,9 @@ public class CarrierFacadeImpl implements CarrierFacade {
 
     @Value("${mes.carrier.enabled:true}")
     private boolean carrierEnabled;
+
+    @Value("${mes.carrier.track-in-scan-required:false}")
+    private boolean trackInScanRequired;
 
     /** 新建载具台账，初始 AVAILABLE */
     @Override
@@ -384,6 +391,24 @@ public class CarrierFacadeImpl implements CarrierFacade {
         }
         AssertUtil.notNull(lotId, ERR_REQUIRED + ": 批次不能为空");
         AssertUtil.isTrue(isBound(lotId), ERR_REQUIRED + ": 批次未绑定载具");
+    }
+
+    /** TrackIn 扫码比对；认 binding → carrier_code */
+    @Override
+    public void assertMatch(Long lotId, String scannedCode) {
+        if (!carrierEnabled || !trackInScanRequired) {
+            return;
+        }
+        AssertUtil.notNull(lotId, ERR_REQUIRED + ": 批次不能为空");
+        MesCarrierBinding binding = bindingMapper.selectOne(new LambdaQueryWrapper<MesCarrierBinding>()
+                .eq(MesCarrierBinding::getLotId, lotId));
+        AssertUtil.notNull(binding, ERR_REQUIRED + ": 批次未绑定载具");
+        String scanned = scannedCode == null ? "" : scannedCode.trim();
+        AssertUtil.isTrue(StringUtils.hasText(scanned), ERR_SCAN_REQUIRED + ": 请扫描载具编码");
+        MesCarrier carrier = carrierMapper.selectById(binding.getCarrierId());
+        AssertUtil.notNull(carrier, ERR_REQUIRED + ": 批次未绑定载具");
+        AssertUtil.isTrue(Objects.equals(scanned, carrier.getCarrierCode()),
+                ERR_MISMATCH + ": 扫码与绑定载具不一致");
     }
 
     /** 查当前绑定详情 */
