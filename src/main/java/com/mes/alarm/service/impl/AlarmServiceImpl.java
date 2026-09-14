@@ -7,6 +7,7 @@ import com.mes.alarm.entity.MesAlarmCode;
 import com.mes.alarm.mapper.MesAlarmCodeMapper;
 import com.mes.alarm.mapper.MesAlarmMapper;
 import com.mes.alarm.service.AlarmService;
+import com.mes.alarm.support.AlarmSelfHoldCodes;
 import com.mes.alarm.ws.AlarmWsPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
@@ -142,6 +145,11 @@ public class AlarmServiceImpl implements AlarmService {
         if (!StringUtils.hasText(onRaise) || !ON_RAISE_HOLD_LOT.equalsIgnoreCase(onRaise.trim())) {
             return;
         }
+        if (AlarmSelfHoldCodes.isSelfHold(row.getCode())) {
+            log.warn("[ALARM] HOLD_LOT 跳过：告警码已由业务自挂锁批 code={} alarmId={}",
+                    row.getCode(), row.getId());
+            return;
+        }
         if (!MesAlarm.ENTITY_LOT.equals(row.getEntityType())
                 || row.getEntityId() == null
                 || row.getEntityId() <= 0) {
@@ -156,11 +164,17 @@ public class AlarmServiceImpl implements AlarmService {
         }
         String reasonCode = def.getHoldReasonCode().trim();
         String remark = "告警策略锁批 alarmId=" + row.getId() + " code=" + row.getCode();
-        try {
-            alarmHoldOnRaiseExecutor.holdLot(row.getEntityId(), reasonCode, remark);
-        } catch (Exception e) {
-            log.error("[ALARM] HOLD_LOT 失败 alarmId={} lotId={} reasonCode={}",
-                    row.getId(), row.getEntityId(), reasonCode, e);
+        Long lotId = row.getEntityId();
+        Runnable job = () -> alarmHoldOnRaiseExecutor.holdLotAsync(lotId, reasonCode, remark);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    job.run();
+                }
+            });
+        } else {
+            job.run();
         }
     }
 

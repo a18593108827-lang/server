@@ -10,6 +10,7 @@ import com.mes.alarm.entity.MesAlarmCode;
 import com.mes.alarm.facade.AlarmFacade;
 import com.mes.alarm.mapper.MesAlarmCodeMapper;
 import com.mes.alarm.mapper.MesAlarmMapper;
+import com.mes.alarm.support.AlarmSelfHoldCodes;
 import com.mes.alarm.vo.AlarmCodeVO;
 import com.mes.alarm.vo.AlarmVO;
 import com.mes.alarm.ws.AlarmWsPublisher;
@@ -186,6 +187,8 @@ public class AlarmFacadeImpl implements AlarmFacade {
                 ? dto.getHoldReasonCode().trim()
                 : null;
         if (ON_RAISE_HOLD_LOT.equals(onRaise)) {
+            AssertUtil.isTrue(!AlarmSelfHoldCodes.isSelfHold(code.trim()),
+                    "该告警码已由业务自挂锁批，禁止再配 HOLD_LOT，请保持 NONE");
             AssertUtil.isTrue(StringUtils.hasText(holdReason), "HOLD_LOT 须填写锁批原因码");
             assertHoldReasonEnabled(holdReason);
         } else {
