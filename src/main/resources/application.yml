@@ -33,6 +33,8 @@ mes:
   dispatch:
     # 设备预约超时（分钟），默认 30
     reserve-ttl-minutes: 30
+    # false=跳过 CRITICAL 未关闭禁派；Hold 闸仍生效
+    block-critical-alarm-enabled: true
   recipe:
     # true=TrackIn 强制要求配方绑定解析成功；默认 false
     require-binding: false

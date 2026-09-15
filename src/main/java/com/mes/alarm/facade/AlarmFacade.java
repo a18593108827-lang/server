@@ -6,7 +6,9 @@ import com.mes.alarm.vo.AlarmCodeVO;
 import com.mes.alarm.vo.AlarmVO;
 import com.mes.common.PageResult;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 告警查询与人工处置（确认 / 关闭）；码表维护。
@@ -40,4 +42,27 @@ public interface AlarmFacade {
 
     /** 更新码表行；不改 code 主键 */
     AlarmCodeVO updateCode(String code, AlarmCodeUpdateDTO dto);
+
+    /**
+     * 派工 Lot 闸：该批次是否存在未关闭 CRITICAL（OPEN/ACK）。
+     * 非法 lotId 视为 false。
+     */
+    boolean hasBlockingCriticalForLot(Long lotId);
+
+    /**
+     * 派工机台闸：该设备是否存在未关闭 CRITICAL。
+     * 非法 eqpId 视为 false。
+     */
+    boolean hasBlockingCriticalForEqp(Long eqpId);
+
+    /**
+     * 派工候选过滤：在给定设备集合中，返回挂有未关闭 CRITICAL 的 eqpId。
+     * 空入参返回空集；一次 IN 查询，避免 N+1。
+     */
+    Set<Long> listEqpIdsWithBlockingCritical(Collection<Long> eqpIds);
+
+    /**
+     * 派工拒绝文案：该批次上最近一条挡派 CRITICAL；没有则 null。
+     */
+    AlarmVO findFirstBlockingCriticalForLot(Long lotId);
 }

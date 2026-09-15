@@ -26,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -127,12 +128,78 @@ public class AlarmFacadeImpl implements AlarmFacade {
 
     @Override
     public List<AlarmVO> listActiveCritical() {
-        List<MesAlarm> rows = mesAlarmMapper.selectList(new LambdaQueryWrapper<MesAlarm>()
-                .eq(MesAlarm::getLevel, LEVEL_CRITICAL)
-                .in(MesAlarm::getStatus, MesAlarm.STATUS_OPEN, MesAlarm.STATUS_ACK)
+        List<MesAlarm> rows = mesAlarmMapper.selectList(blockingCriticalBase()
                 .orderByDesc(MesAlarm::getLastRaiseAt)
                 .last("LIMIT " + CRITICAL_LIMIT));
         return rows.stream().map(this::toVo).collect(Collectors.toList());
+    }
+
+    /** 批次是否挂有未关闭严重告警（派工 Lot 闸） */
+    @Override
+    public boolean hasBlockingCriticalForLot(Long lotId) {
+        if (lotId == null || lotId <= 0) {
+            return false;
+        }
+        Long n = mesAlarmMapper.selectCount(blockingCriticalBase()
+                .eq(MesAlarm::getEntityType, MesAlarm.ENTITY_LOT)
+                .eq(MesAlarm::getEntityId, lotId)
+                .last("LIMIT 1"));
+        return n != null && n > 0;
+    }
+
+    /** 设备是否挂有未关闭严重告警（派工机台闸） */
+    @Override
+    public boolean hasBlockingCriticalForEqp(Long eqpId) {
+        if (eqpId == null || eqpId <= 0) {
+            return false;
+        }
+        Long n = mesAlarmMapper.selectCount(blockingCriticalBase()
+                .eq(MesAlarm::getEntityType, MesAlarm.ENTITY_EQP)
+                .eq(MesAlarm::getEntityId, eqpId)
+                .last("LIMIT 1"));
+        return n != null && n > 0;
+    }
+
+    /** 批量标出有未关闭严重告警的设备，供候选列表一次剔除 */
+    @Override
+    public Set<Long> listEqpIdsWithBlockingCritical(Collection<Long> eqpIds) {
+        if (eqpIds == null || eqpIds.isEmpty()) {
+            return Set.of();
+        }
+        List<Long> ids = eqpIds.stream().filter(id -> id != null && id > 0).distinct().collect(Collectors.toList());
+        if (ids.isEmpty()) {
+            return Set.of();
+        }
+        List<MesAlarm> rows = mesAlarmMapper.selectList(blockingCriticalBase()
+                .eq(MesAlarm::getEntityType, MesAlarm.ENTITY_EQP)
+                .in(MesAlarm::getEntityId, ids)
+                .select(MesAlarm::getEntityId));
+        return rows.stream()
+                .map(MesAlarm::getEntityId)
+                .filter(id -> id != null && id > 0)
+                .collect(Collectors.toSet());
+    }
+
+    /** 取批次上最近一条挡派严重告警，拼派工拒绝文案用 */
+    @Override
+    public AlarmVO findFirstBlockingCriticalForLot(Long lotId) {
+        if (lotId == null || lotId <= 0) {
+            return null;
+        }
+        MesAlarm row = mesAlarmMapper.selectOne(blockingCriticalBase()
+                .eq(MesAlarm::getEntityType, MesAlarm.ENTITY_LOT)
+                .eq(MesAlarm::getEntityId, lotId)
+                .orderByDesc(MesAlarm::getLastRaiseAt)
+                .orderByDesc(MesAlarm::getId)
+                .last("LIMIT 1"));
+        return row == null ? null : toVo(row);
+    }
+
+    /** 挡派条件底稿：CRITICAL 且未关闭（OPEN/ACK），与顶栏一致 */
+    private LambdaQueryWrapper<MesAlarm> blockingCriticalBase() {
+        return new LambdaQueryWrapper<MesAlarm>()
+                .eq(MesAlarm::getLevel, LEVEL_CRITICAL)
+                .in(MesAlarm::getStatus, MesAlarm.STATUS_OPEN, MesAlarm.STATUS_ACK);
     }
 
     @Override
