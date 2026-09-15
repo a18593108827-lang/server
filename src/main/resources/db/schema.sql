@@ -213,6 +213,9 @@ INSERT INTO sys_permission (id, parent_id, perm_type, perm_code, perm_name, path
 (320, 200, 2, 'carrier:view',       '载具',   '/app/carrier',    'box',            155, 1, NOW(), NOW(), 0),
 (321, 320, 3, 'carrier:edit',       '载具编辑', NULL,            NULL,               1, 1, NOW(), NOW(), 0),
 (322, 320, 3, 'carrier:bind',       '载具绑解', NULL,            NULL,               2, 1, NOW(), NOW(), 0),
+(330, 280, 3, 'complaint:view',     '追溯包查看', NULL,          NULL,               1, 1, NOW(), NOW(), 0),
+(331, 280, 3, 'complaint:build',    '追溯包生成', NULL,          NULL,               2, 1, NOW(), NOW(), 0),
+(332, 280, 3, 'complaint:contain',  '追溯包遏制', NULL,          NULL,               3, 1, NOW(), NOW(), 0),
 -- ????
 (100, 0,   1, 'system',              '????', NULL,                   'settings', 100, 1, NOW(), NOW(), 0),
 (110, 100, 2, 'system:user',         '????', '/app/auth/users',      NULL,       10,  1, NOW(), NOW(), 0),
@@ -321,7 +324,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1147, 1, 311, NOW()),
 (1148, 1, 320, NOW()),
 (1149, 1, 321, NOW()),
-(1150, 1, 322, NOW())
+(1150, 1, 322, NOW()),
+(1151, 1, 330, NOW()),
+(1152, 1, 331, NOW()),
+(1153, 1, 332, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- supervisor????? + ????
@@ -360,7 +366,10 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1425, 4, 272, NOW()),
 (1427, 4, 311, NOW()),
 (1428, 4, 320, NOW()),
-(1429, 4, 322, NOW())
+(1429, 4, 322, NOW()),
+(1430, 4, 330, NOW()),
+(1431, 4, 331, NOW()),
+(1432, 4, 332, NOW())
 ON DUPLICATE KEY UPDATE role_id = VALUES(role_id);
 
 -- operator??? + ??
@@ -425,6 +434,9 @@ INSERT INTO sys_role_permission (id, role_id, permission_id, create_time) VALUES
 (1343, 3, 320, NOW()),
 (1344, 3, 321, NOW()),
 (1345, 3, 322, NOW()),
+(1346, 3, 330, NOW()),
+(1347, 3, 331, NOW()),
+(1348, 3, 332, NOW()),
 (1305, 3, 250, NOW()),
 (1309, 3, 251, NOW()),
 (1310, 3, 252, NOW()),
@@ -1181,3 +1193,41 @@ CREATE TABLE IF NOT EXISTS mes_carrier_binding (
     UNIQUE KEY uk_binding_carrier (carrier_id),
     KEY idx_binding_bind_time (bind_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='carrier current binding';
+
+CREATE TABLE IF NOT EXISTS mes_complaint_package (
+    id               BIGINT         NOT NULL COMMENT 'PK=packageId',
+    package_no       VARCHAR(64)    NOT NULL COMMENT 'CP-yyyyMMdd-seq',
+    anchor_lot_id    BIGINT         NOT NULL COMMENT 'anchor lot',
+    anchor_lot_no    VARCHAR(64)    NOT NULL COMMENT 'anchor lot no snapshot',
+    direction        VARCHAR(16)    NOT NULL COMMENT 'up/down/both',
+    depth            INT            NOT NULL COMMENT 'expand depth',
+    member_count     INT            NOT NULL DEFAULT 0 COMMENT 'member count',
+    truncated        TINYINT        NOT NULL DEFAULT 0 COMMENT 'truncated 0/1',
+    reason_code      VARCHAR(64)             COMMENT 'reason code',
+    remark           VARCHAR(512)            COMMENT 'remark',
+    status           VARCHAR(32)    NOT NULL DEFAULT 'READY' COMMENT 'READY/CONTAINING/CONTAINED/VOID',
+    create_by        BIGINT                  COMMENT 'create by',
+    create_time      DATETIME                COMMENT 'create time',
+    contain_by       BIGINT                  COMMENT 'first contain by',
+    contain_time     DATETIME                COMMENT 'first contain time',
+    update_time      DATETIME                COMMENT 'update time',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_complaint_package_no (package_no),
+    KEY idx_complaint_pkg_anchor (anchor_lot_id),
+    KEY idx_complaint_pkg_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='complaint trace package header';
+
+CREATE TABLE IF NOT EXISTS mes_complaint_package_member (
+    id                 BIGINT         NOT NULL COMMENT 'PK',
+    package_id         BIGINT         NOT NULL COMMENT 'package id',
+    lot_id             BIGINT         NOT NULL COMMENT 'member lot',
+    lot_no             VARCHAR(64)    NOT NULL COMMENT 'member lot no',
+    relation           VARCHAR(32)    NOT NULL COMMENT 'ANCHOR/ANCESTOR/DESCENDANT',
+    depth_from_anchor  INT            NOT NULL DEFAULT 0 COMMENT 'depth from anchor',
+    qty_snapshot       INT                     COMMENT 'qty at build',
+    status_snapshot    VARCHAR(32)             COMMENT 'status at build',
+    create_time        DATETIME                COMMENT 'create time',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_complaint_pkg_lot (package_id, lot_id),
+    KEY idx_complaint_member_lot (lot_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='complaint package members';
